@@ -1,0 +1,6 @@
+*.o
+si
+Documentation
+drivers
+arch
+*.xml
