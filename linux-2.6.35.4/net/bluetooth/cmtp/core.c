@@ -86,7 +86,6 @@ static void __cmtp_copy_session(struct cmtp_session *session, struct cmtp_connin
 	ci->num = session->num;
 }
 
-
 static inline int cmtp_alloc_block_id(struct cmtp_session *session)
 {
 	int i, id = -1;

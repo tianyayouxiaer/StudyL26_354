@@ -6,6 +6,10 @@
 #include <linux/prefetch.h>
 #include <asm/system.h>
 
+// 使用链表的情况：
+// case1: 需要遍历所有元素
+// case2：需要动态添加或删除
+
 /*
  * Simple doubly linked list implementation.
  *
@@ -16,15 +20,27 @@
  * using the generic single-entry routines.
  */
 
+//linux内核链表通常嵌入到你自己的数据结构中
+
+//定义循环链表数据结构
 struct list_head {
 	struct list_head *next, *prev;
 };
 
 #define LIST_HEAD_INIT(name) { &(name), &(name) }
 
+// 在只有头节点时，这个节点的prev和next都是指向自身的，这就是循环链表初始化要做的工作，
+// 也就是LIST_HEAD这个宏要完成的工作。
+/* 
+	这个宏其实就是循环链表的定义+初始化，代码功能等价于：
+    struct list_head head;
+    head.prev = &head;
+	head.next = &prev;
+*/
 #define LIST_HEAD(name) \
 	struct list_head name = LIST_HEAD_INIT(name)
 
+// 初始化化链表，循环双向链表，prev和next都指向自己
 static inline void INIT_LIST_HEAD(struct list_head *list)
 {
 	list->next = list;
@@ -61,6 +77,7 @@ extern void __list_add(struct list_head *new,
  * Insert a new entry after the specified head.
  * This is good for implementing stacks.
  */
+ // 在head节点后插入new节点
 static inline void list_add(struct list_head *new, struct list_head *head)
 {
 	__list_add(new, head, head->next);
@@ -75,6 +92,7 @@ static inline void list_add(struct list_head *new, struct list_head *head)
  * Insert a new entry before the specified head.
  * This is useful for implementing queues.
  */
+ // 节点添加到链表尾
 static inline void list_add_tail(struct list_head *new, struct list_head *head)
 {
 	__list_add(new, head->prev, head);
@@ -99,6 +117,7 @@ static inline void __list_del(struct list_head * prev, struct list_head * next)
  * Note: list_empty() on entry does not return true after this, the entry is
  * in an undefined state.
  */
+//从节点中删除元素，但是该操作不会释放包含entry的数据结构所占的内存
 #ifndef CONFIG_DEBUG_LIST
 static inline void list_del(struct list_head *entry)
 {
@@ -117,6 +136,7 @@ extern void list_del(struct list_head *entry);
  *
  * If @old was empty, it will be overwritten.
  */
+
 static inline void list_replace(struct list_head *old,
 				struct list_head *new)
 {
@@ -137,6 +157,8 @@ static inline void list_replace_init(struct list_head *old,
  * list_del_init - deletes entry from list and reinitialize it.
  * @entry: the element to delete from the list.
  */
+ // 删除节点并重新初始化
+ // 虽然链表不再需要entry项，但还可以再次使用包含entry的数据结构
 static inline void list_del_init(struct list_head *entry)
 {
 	__list_del(entry->prev, entry->next);
@@ -148,6 +170,7 @@ static inline void list_del_init(struct list_head *entry)
  * @list: the entry to move
  * @head: the head that will precede our entry
  */
+ //把一个链表移到另一个链表的头部
 static inline void list_move(struct list_head *list, struct list_head *head)
 {
 	__list_del(list->prev, list->next);
@@ -159,6 +182,7 @@ static inline void list_move(struct list_head *list, struct list_head *head)
  * @list: the entry to move
  * @head: the head that will follow our entry
  */
+ //把一个链表移到另一个链表的尾部
 static inline void list_move_tail(struct list_head *list,
 				  struct list_head *head)
 {
@@ -171,6 +195,7 @@ static inline void list_move_tail(struct list_head *list,
  * @list: the entry to test
  * @head: the head of the list
  */
+ //节点list是否是尾节点
 static inline int list_is_last(const struct list_head *list,
 				const struct list_head *head)
 {
@@ -181,6 +206,7 @@ static inline int list_is_last(const struct list_head *list,
  * list_empty - tests whether a list is empty
  * @head: the list to test.
  */
+ //检查链表是否为空，若指定链表为空，则返回1，否则返回0
 static inline int list_empty(const struct list_head *head)
 {
 	return head->next == head;
@@ -287,6 +313,7 @@ static inline void __list_splice(const struct list_head *list,
  * @list: the new list to add.
  * @head: the place to add it in the first list.
  */
+ // 合并两个链表，将list指向的链表插入到指定链表的head元素后面
 static inline void list_splice(const struct list_head *list,
 				struct list_head *head)
 {
@@ -313,6 +340,7 @@ static inline void list_splice_tail(struct list_head *list,
  *
  * The list at @list is reinitialised
  */
+ // 把两个链表合并在一起，并重新初始化原来链表
 static inline void list_splice_init(struct list_head *list,
 				    struct list_head *head)
 {
@@ -345,6 +373,7 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @type:	the type of the struct this is embedded in.
  * @member:	the name of the list_struct within the struct.
  */
+ // 获取包含给定list的数据结构
 #define list_entry(ptr, type, member) \
 	container_of(ptr, type, member)
 
@@ -364,6 +393,7 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @pos:	the &struct list_head to use as a loop cursor.
  * @head:	the head for your list.
  */
+ // 遍历链表
 #define list_for_each(pos, head) \
 	for (pos = (head)->next; prefetch(pos->next), pos != (head); \
         	pos = pos->next)
@@ -417,6 +447,8 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @head:	the head for your list.
  * @member:	the name of the list_struct within the struct.
  */
+ // pos - 指向包含list_head节点对象的指针，可以看做是list_entry宏的返回值
+ // head - 指向头结点的指针，即遍历起始位置
 #define list_for_each_entry(pos, head, member)				\
 	for (pos = list_entry((head)->next, typeof(*pos), member);	\
 	     prefetch(pos->member.next), &pos->member != (head); 	\
