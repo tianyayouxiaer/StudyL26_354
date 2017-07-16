@@ -23,6 +23,8 @@
 #include <linux/rbtree.h>
 #include <linux/module.h>
 
+//参考： http://blog.csdn.net/npy_lp/article/details/7420689
+
 static void __rb_rotate_left(struct rb_node *node, struct rb_root *root)
 {
 	struct rb_node *right = node->rb_right;

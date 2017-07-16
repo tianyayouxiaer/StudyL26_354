@@ -37,16 +37,20 @@
 
 static struct kmem_cache *idr_layer_cache;
 
+//参见：http://blog.csdn.net/orz415678659/article/details/8539794
+
+
+//从idr空闲idr_layer链表中获取第一个idr_layer
 static struct idr_layer *get_from_free_list(struct idr *idp)
 {
-	struct idr_layer *p;
+	struct idr_layer *p;//定义一个idr_layer指针
 	unsigned long flags;
 
 	spin_lock_irqsave(&idp->lock, flags);
-	if ((p = idp->id_free)) {
-		idp->id_free = p->ary[0];
-		idp->id_free_cnt--;
-		p->ary[0] = NULL;
+	if ((p = idp->id_free)) {//根free获取一个空闲idr_layer 
+		idp->id_free = p->ary[0];//idr空闲链表指针指向第二个idr_layer
+		idp->id_free_cnt--;//idr的空闲idr_layer个数减1(14-1)
+		p->ary[0] = NULL;//断开第一个idr_layer和第二个idr_layer的联系 
 	}
 	spin_unlock_irqrestore(&idp->lock, flags);
 	return(p);
@@ -66,6 +70,16 @@ static inline void free_layer(struct idr_layer *p)
 }
 
 /* only called when idp->lock is held */
+/* 
+在初始化创建IDR对象时，top设为NULL，id_free设为NULL，id_free_cnt设为0，
+在将第一个idr_layer移入链表时，该idr_layer第一个slot槽（ary[0]）指向id_free（NULL），
+而id_free指向新加入的idr_layer，id_free_cnt加1，
+
+第二个idr_layer移入链表时，该idr_layer第一个slot槽（ary[0]）指向第一个idr_layer，
+而id_free指向第二个idr_layer，id_free_cnt自加到2；一次移入第三个，第四个，…，
+直到第十四个idr_layer为止，最终id_free指向最后一个idr_layer，id_free_cnt为14
+
+*/
 static void __move_to_free_list(struct idr *idp, struct idr_layer *p)
 {
 	p->ary[0] = idp->id_free;
@@ -117,14 +131,17 @@ static void idr_mark_full(struct idr_layer **pa, int id)
  * If the system is REALLY out of memory this function returns 0,
  * otherwise 1.
  */
+ // 分配UID
+ // 第一步：告诉idr你需要分配UID，允许其在必要时调整后备树的大小
+ // 第二步：请求新的UID
 int idr_pre_get(struct idr *idp, gfp_t gfp_mask)
 {
-	while (idp->id_free_cnt < IDR_FREE_MAX) {
-		struct idr_layer *new;
-		new = kmem_cache_zalloc(idr_layer_cache, gfp_mask);
+	while (idp->id_free_cnt < IDR_FREE_MAX) { //IDR_FREE_MAX=14
+		struct idr_layer *new;//定义新的idr_layer结构体指针
+		new = kmem_cache_zalloc(idr_layer_cache, gfp_mask);//分配*new内存空间
 		if (new == NULL)
 			return (0);
-		move_to_free_list(idp, new);
+		move_to_free_list(idp, new); //将预申请的idr_layer内存放入可用链表中
 	}
 	return 1;
 }
@@ -139,17 +156,17 @@ static int sub_alloc(struct idr *idp, int *starting_id, struct idr_layer **pa)
 
 	id = *starting_id;
  restart:
-	p = idp->top;
-	l = idp->layers;
-	pa[l--] = NULL;
+	p = idp->top; //根top 
+	l = idp->layers;//l=1 
+	pa[l--] = NULL;//p[1]=NULL;l=0
 	while (1) {
 		/*
 		 * We run around this while until we reach the leaf node...
 		 */
-		n = (id >> (IDR_BITS*l)) & IDR_MASK;
-		bm = ~p->bitmap;
-		m = find_next_bit(&bm, IDR_SIZE, n);
-		if (m == IDR_SIZE) {
+		n = (id >> (IDR_BITS*l)) & IDR_MASK;//计算对应的n值,属于[0,31]
+		bm = ~p->bitmap;//取反位图 
+		m = find_next_bit(&bm, IDR_SIZE, n);//位图中偏移量为n处查找'1'
+		if (m == IDR_SIZE) { //位图满
 			/* no space available go back to previous layer. */
 			l++;
 			oid = id;
@@ -172,13 +189,13 @@ static int sub_alloc(struct idr *idp, int *starting_id, struct idr_layer **pa)
 			else
 				goto restart;
 		}
-		if (m != n) {
+		if (m != n) {//期望的n值被占用,但可找到可用的m值
 			sh = IDR_BITS*l;
-			id = ((id >> sh) ^ n ^ m) << sh;
+			id = ((id >> sh) ^ n ^ m) << sh;//>>>2 重新计算id值
 		}
 		if ((id >= MAX_ID_BIT) || (id < 0))
 			return IDR_NOMORE_SPACE;
-		if (l == 0)
+		if (l == 0)//l==0跳出while循环
 			break;
 		/*
 		 * Create the layer below if it is missing.
@@ -191,7 +208,7 @@ static int sub_alloc(struct idr *idp, int *starting_id, struct idr_layer **pa)
 			rcu_assign_pointer(p->ary[m], new);
 			p->count++;
 		}
-		pa[l--] = p;
+		pa[l--] = p;//pa[0]=p 也就是idr_layer14 
 		p = p->ary[m];
 	}
 
@@ -206,20 +223,21 @@ static int idr_get_empty_slot(struct idr *idp, int starting_id,
 	int layers, v, id;
 	unsigned long flags;
 
-	id = starting_id;
+	id = starting_id; //按常规出牌吧,假设这个为0
 build_up:
-	p = idp->top;
-	layers = idp->layers;
-	if (unlikely(!p)) {
-		if (!(p = get_from_free_list(idp)))
+	p = idp->top;//根top指向的idr_layer NULL
+	layers = idp->layers;//获取layers层数量(0)
+	if (unlikely(!p)) {//第一次运行idp->top=NULL,所以if条件为真
+		if (!(p = get_from_free_list(idp)))//从根free中获取一个idr_layer14
 			return -1;
-		p->layer = 0;
-		layers = 1;
+		p->layer = 0;//指定idr_layer14的层号为0  
+		layers = 1;//layers层数量设为1 
 	}
 	/*
 	 * Add a new layer to the top of the tree if the requested
 	 * id is larger than the currently allocated space.
 	 */
+	//layers<6 && id>=2^(layers*5) 看需不需要增加层数
 	while ((layers < (MAX_LEVEL - 1)) && (id >= (1 << (layers*IDR_BITS)))) {
 		layers++;
 		if (!p->count) {
@@ -252,29 +270,29 @@ build_up:
 			__set_bit(0, &new->bitmap);
 		p = new;
 	}
-	rcu_assign_pointer(idp->top, p);
-	idp->layers = layers;
-	v = sub_alloc(idp, &id, pa);
-	if (v == IDR_NEED_TO_GROW)
+	rcu_assign_pointer(idp->top, p);//根top指向idr_layer14 
+	idp->layers = layers;//设置更新idr->layers层数量 
+	//以上部分主要处理layer相关,以下部分主要处理id相关
+	v = sub_alloc(idp, &id, pa); //>>>2-->sub_alloc 
+	if (v == IDR_NEED_TO_GROW)//IDR_NEED_TO_GROW=-2需要扩大 
 		goto build_up;
 	return(v);
 }
 
 static int idr_get_new_above_int(struct idr *idp, void *ptr, int starting_id)
 {
-	struct idr_layer *pa[MAX_LEVEL];
+	struct idr_layer *pa[MAX_LEVEL]; //MAX_LEVEL=7 
 	int id;
 
-	id = idr_get_empty_slot(idp, starting_id, pa);
-	if (id >= 0) {
+	id = idr_get_empty_slot(idp, starting_id, pa); 
 		/*
 		 * Successfully found an empty slot.  Install the user
 		 * pointer and mark the slot full.
 		 */
 		rcu_assign_pointer(pa[0]->ary[id & IDR_MASK],
 				(struct idr_layer *)ptr);
-		pa[0]->count++;
-		idr_mark_full(pa, id);
+		pa[0]->count++; //pa[0]->ary[0]=ptr 也就是idr_layer14->ary[0]=ptr
+		idr_mark_full(pa, id);//设置其位图
 	}
 
 	return id;
@@ -296,6 +314,7 @@ static int idr_get_new_above_int(struct idr *idp, void *ptr, int starting_id)
  *
  * @id returns a value in the range @starting_id ... 0x7fffffff
  */
+ // 指定一个最小的UID返回值
 int idr_get_new_above(struct idr *idp, void *ptr, int starting_id, int *id)
 {
 	int rv;
@@ -327,6 +346,8 @@ EXPORT_SYMBOL(idr_get_new_above);
  *
  * @id returns a value in the range 0 ... 0x7fffffff
  */
+
+ // 分配UID号，并将其添加到idr中
 int idr_get_new(struct idr *idp, void *ptr, int *id)
 {
 	int rv;
@@ -392,6 +413,7 @@ static void sub_remove(struct idr *idp, int shift, int id)
  * @idp: idr handle
  * @id: unique key
  */
+// 从idr中删除uid，如果成功，则将id关联的指针一起从映射表中删除
 void idr_remove(struct idr *idp, int id)
 {
 	struct idr_layer *p;
@@ -481,6 +503,8 @@ EXPORT_SYMBOL(idr_remove_all);
  * idr_destroy - release all cached layers within an idr tree
  * idp: idr handle
  */
+ // 撤销一个idr，只释放idr中未使用的内存，但并不释放当前分配给UID使用的任何内存
+ // 首先对idp指向的idr调用idr_remove_all，然后再调用idr_destroy，这样就能使idr占用的内存被释放
 void idr_destroy(struct idr *idp)
 {
 	while (idp->id_free_cnt) {
@@ -502,15 +526,16 @@ EXPORT_SYMBOL(idr_destroy);
  * This function can be called under rcu_read_lock(), given that the leaf
  * pointers lifetimes are correctly managed.
  */
+ // 通过id返回对应指针
 void *idr_find(struct idr *idp, int id)
 {
 	int n;
 	struct idr_layer *p;
 
-	p = rcu_dereference_raw(idp->top);
+	p = rcu_dereference_raw(idp->top); // //获取根top 
 	if (!p)
 		return NULL;
-	n = (p->layer+1) * IDR_BITS;
+	n = (p->layer+1) * IDR_BITS; //计算最外层的n值
 
 	/* Mask off upper bits we don't use for the search. */
 	id &= MAX_ID_MASK;
@@ -519,10 +544,10 @@ void *idr_find(struct idr *idp, int id)
 		return NULL;
 	BUG_ON(n == 0);
 
-	while (n > 0 && p) {
+	while (n > 0 && p) {//循环一层层查找
 		n -= IDR_BITS;
 		BUG_ON(n != p->layer*IDR_BITS);
-		p = rcu_dereference_raw(p->ary[(id >> n) & IDR_MASK]);
+		p = rcu_dereference_raw(p->ary[(id >> n) & IDR_MASK]);//一次获取an ... a0
 	}
 	return((void *)p);
 }
@@ -687,6 +712,7 @@ void __init idr_init_cache(void)
  * This function is use to set up the handle (@idp) that you will pass
  * to the rest of the functions.
  */
+ //初始化idr结构
 void idr_init(struct idr *idp)
 {
 	memset(idp, 0, sizeof(struct idr));

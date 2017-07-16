@@ -17,6 +17,7 @@
 #include <linux/init.h>
 #include <linux/rcupdate.h>
 
+//在32位系统中IDR_BITS的取值为5
 #if BITS_PER_LONG == 32
 # define IDR_BITS 5
 # define IDR_FULL 0xfffffffful
@@ -49,18 +50,18 @@
 #define IDR_FREE_MAX MAX_LEVEL + MAX_LEVEL
 
 struct idr_layer {
-	unsigned long		 bitmap; /* A zero bit means "space here" */
-	struct idr_layer	*ary[1<<IDR_BITS];
-	int			 count;	 /* When zero, we can release it */
-	int			 layer;	 /* distance from leaf */
+	unsigned long		 bitmap; /* A zero bit means "space here" *///标记位图,标记使用情况
+	struct idr_layer	*ary[1<<IDR_BITS]; //子idr_layer数组ary[32]
+	int			 count;	 /* When zero, we can release it */ //ary数组使用情况
+	int			 layer;	 /* distance from leaf */ //层号
 	struct rcu_head		 rcu_head;
 };
 
 struct idr {
-	struct idr_layer *top;
-	struct idr_layer *id_free;
-	int		  layers; /* only valid without concurrent changes */
-	int		  id_free_cnt;
+	struct idr_layer *top; //idr_layer顶层,32叉树的根
+	struct idr_layer *id_free;////指向idr_layer的空闲链表
+	int		  layers; /* only valid without concurrent changes *///idr_layer的层数量
+	int		  id_free_cnt;//idr_layer空闲链表中剩余的idr_layer个数
 	spinlock_t	  lock;
 };
 

@@ -99,11 +99,11 @@ static inline struct page * rb_insert_page_cache(struct inode * inode,
 
 struct rb_node
 {
-	unsigned long  rb_parent_color;
+	unsigned long  rb_parent_color;//该节点的父节点 
 #define	RB_RED		0
 #define	RB_BLACK	1
-	struct rb_node *rb_right;
-	struct rb_node *rb_left;
+	struct rb_node *rb_right;//该节点的右子节点
+	struct rb_node *rb_left;//该节点的左子节点
 } __attribute__((aligned(sizeof(long))));
     /* The alignment might seem pointless, but allegedly CRIS needs it */
 
@@ -112,12 +112,17 @@ struct rb_root
 	struct rb_node *rb_node;
 };
 
-
+//获得其双亲结点的首地址
 #define rb_parent(r)   ((struct rb_node *)((r)->rb_parent_color & ~3))
+////获得颜色属性
 #define rb_color(r)   ((r)->rb_parent_color & 1)
+////判断颜色属性是否为红
 #define rb_is_red(r)   (!rb_color(r))
+////判断颜色属性是否为黑
 #define rb_is_black(r) rb_color(r)
+////设置红色属性
 #define rb_set_red(r)  do { (r)->rb_parent_color &= ~1; } while (0)
+////设置黑色属性
 #define rb_set_black(r)  do { (r)->rb_parent_color |= 1; } while (0)
 
 static inline void rb_set_parent(struct rb_node *rb, struct rb_node *p)
