@@ -23,6 +23,12 @@
  * @member:	the name of the member within the struct.
  *
  */
+ //根据一个结构体变量中的一个域成员变量的指针来获取指向整个结构体变量的指针
+ // ptr:表示结构体中member的地址
+ // type:表示结构体类型
+ // member:表示结构体中的成员
+ // 第一步，首先定义一个临时的数据类型（通过typeof( ((type *)0)->member )获得）与ptr相同的指针变量__mptr，然后用它来保存ptr的值。
+ // 第二步，用(char *)__mptr减去member在结构体中的偏移量，得到的值就是整个结构体变量的首地址（整个宏的返回值就是这个首地址）
 #define container_of(ptr, type, member) ({			\
 	const typeof(((type *)0)->member) * __mptr = (ptr);	\
 	(type *)((char *)__mptr - offsetof(type, member)); })
