@@ -374,6 +374,7 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @member:	the name of the list_struct within the struct.
  */
  // 获取包含给定list的数据结构
+ // 原理为指针ptr指向结构体type中的成员member；通过指针ptr，返回结构体type的起始地址。
 #define list_entry(ptr, type, member) \
 	container_of(ptr, type, member)
 
@@ -449,6 +450,7 @@ static inline void list_splice_tail_init(struct list_head *list,
  */
  // pos - 指向包含list_head节点对象的指针，可以看做是list_entry宏的返回值
  // head - 指向头结点的指针，即遍历起始位置
+ // prefetch() 可以不考虑，用于预取以提高遍历速度
 #define list_for_each_entry(pos, head, member)				\
 	for (pos = list_entry((head)->next, typeof(*pos), member);	\
 	     prefetch(pos->member.next), &pos->member != (head); 	\
@@ -460,6 +462,7 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @head:	the head for your list.
  * @member:	the name of the list_struct within the struct.
  */
+// 反向遍历，list_for_each_entry是沿着next指针向前遍历，而该函数是沿着prev指针向前遍历
 #define list_for_each_entry_reverse(pos, head, member)			\
 	for (pos = list_entry((head)->prev, typeof(*pos), member);	\
 	     prefetch(pos->member.prev), &pos->member != (head); 	\
@@ -523,6 +526,8 @@ static inline void list_splice_tail_init(struct list_head *list,
  * @head:	the head for your list.
  * @member:	the name of the list_struct within the struct.
  */
+ // 遍历时同时删除
+ // 其实目的时删除pos，但是会存储next 到n处
 #define list_for_each_entry_safe(pos, n, head, member)			\
 	for (pos = list_entry((head)->next, typeof(*pos), member),	\
 		n = list_entry(pos->member.next, typeof(*pos), member);	\
@@ -570,6 +575,7 @@ static inline void list_splice_tail_init(struct list_head *list,
  * Iterate backwards over list of given type, safe against removal
  * of list entry.
  */
+ // 反向遍历链表同时删除
 #define list_for_each_entry_safe_reverse(pos, n, head, member)		\
 	for (pos = list_entry((head)->prev, typeof(*pos), member),	\
 		n = list_entry(pos->member.prev, typeof(*pos), member);	\

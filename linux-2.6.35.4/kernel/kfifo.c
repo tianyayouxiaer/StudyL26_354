@@ -28,6 +28,8 @@
 #include <linux/log2.h>
 #include <linux/uaccess.h>
 
+// kfifo 生产消费者模型，生产者产生数据，消费者消费数据
+
 static void _kfifo_init(struct kfifo *fifo, void *buffer,
 		unsigned int size)
 {
@@ -44,6 +46,8 @@ static void _kfifo_init(struct kfifo *fifo, void *buffer,
  * @size: the size of the internal buffer, this has to be a power of 2.
  *
  */
+
+ //根据给定buffer创建一个kfifo
 void kfifo_init(struct kfifo *fifo, void *buffer, unsigned int size)
 {
 	/* size must be a power of 2 */
@@ -65,6 +69,8 @@ EXPORT_SYMBOL(kfifo_init);
  * The buffer will be release with kfifo_free().
  * Return 0 if no error, otherwise the an error code
  */
+
+ // 创建并初始化一个大小为size的kfifo，内核使用gfp_mask标识分配队列
 int kfifo_alloc(struct kfifo *fifo, unsigned int size, gfp_t gfp_mask)
 {
 	unsigned char *buffer;
@@ -250,12 +256,18 @@ EXPORT_SYMBOL(__kfifo_in_n);
  * Note that with only one concurrent reader and one concurrent
  * writer, you don't need extra locking to use these functions.
  */
+ // 插入队列数据
+ // 把from指针所指的len字节数据拷贝到fifo所指的队列中，成功，返推入数据的字节大小
 unsigned int kfifo_in(struct kfifo *fifo, const void *from,
 				unsigned int len)
 {
+	// 能入队列多少数据
 	len = min(kfifo_avail(fifo), len);
 
+	//拷贝数据
 	__kfifo_in_data(fifo, from, len, 0);
+
+	//in位置更新
 	__kfifo_add_in(fifo, len);
 	return len;
 }
@@ -292,11 +304,13 @@ EXPORT_SYMBOL(__kfifo_out_n);
  * Note that with only one concurrent reader and one concurrent
  * writer, you don't need extra locking to use these functions.
  */
+//摘取队列数据
 unsigned int kfifo_out(struct kfifo *fifo, void *to, unsigned int len)
 {
 	len = min(kfifo_len(fifo), len);
 
 	__kfifo_out_data(fifo, to, len, 0);
+	//更新out位置
 	__kfifo_add_out(fifo, len);
 
 	return len;
@@ -314,6 +328,7 @@ EXPORT_SYMBOL(kfifo_out);
  * into the @to buffer and returns the number of copied bytes.
  * The data is not removed from the FIFO.
  */
+ // 获取队列中的数据，但是不删除队列中数据，和kfifo_out相比较只是没有更新out位置而已
 unsigned int kfifo_out_peek(struct kfifo *fifo, void *to, unsigned int len,
 			    unsigned offset)
 {

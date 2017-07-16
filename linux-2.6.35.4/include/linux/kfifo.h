@@ -189,6 +189,7 @@ static inline __must_check int kfifo_is_full(struct kfifo *fifo)
  * kfifo_avail - returns the number of bytes available in the FIFO
  * @fifo: the fifo to be used.
  */
+ // kfifo队列中还有多少可用空间
 static inline __must_check unsigned int kfifo_avail(struct kfifo *fifo)
 {
 	return kfifo_size(fifo) - kfifo_len(fifo);
