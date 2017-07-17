@@ -105,6 +105,21 @@
 #include <linux/compiler.h>
 #include <linux/slab.h>
 
+/* 
+inflate.c是从gzip源程序中分离出来的，包含了一些对全局数据的直接引用，
+在使用时需要直接嵌入到代码中。gzip压缩文件时总是在前32K字节的范围内寻找重复的字符串进行编码，
+在解压时需要一个至少为32K字节的解压缓冲区，它定义为window[WSIZE]。
+inflate.c使用get_byte()读取输入文件，它被定义成宏来提高效率。
+输入缓冲区指针必须定义为inptr，inflate.c中对之有减量操作。
+inflate.c调用flush_window()来输出window缓冲区中的解压出的字节串，
+每次输出长度用outcnt变量表示。在flush_window()中，还必须对输出字节串计算CRC并且刷新crc变量。
+在调用gunzip()开始解压之前，调用makecrc()初始化CRC计算表。最后gunzip()返回0表示解压成功。
+我们在内核启动的开始都会看到这样的输出：
+
+UncompressingLinux...done, booting the kernel.
+
+*/
+
 #ifdef RCSID
 static char rcsid[] = "#Id: inflate.c,v 0.14 1993/06/10 13:27:04 jloup Exp #";
 #endif

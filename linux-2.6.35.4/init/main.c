@@ -78,6 +78,12 @@
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
 
+/*
+http://blog.csdn.net/gqb_driver/article/details/26954425
+
+
+*/
+
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/smp.h>
 #endif
@@ -536,6 +542,12 @@ static void __init mm_init(void)
 	vmalloc_init();
 }
 
+/*
+start_kernel是所有Linux平台进入系统内核初始化后的入口函数，
+它主要完成剩余的与 硬件平台相关的初始化工作，在进行一系列与
+内核相关的初始化后，调用第一个用户进程－ init 进程并等待用户
+进程的执行，这样整个 Linux内核便启动完毕。
+*/
 asmlinkage void __init start_kernel(void)
 {
 	char * command_line;
@@ -570,7 +582,9 @@ asmlinkage void __init start_kernel(void)
 	boot_cpu_init();
 	page_address_init();
 	printk(KERN_NOTICE "%s", linux_banner);
-	setup_arch(&command_line);
+	//进行与体系结构相关的第一个初始化工作,对不同的体系结构来说该函数有不同的定义
+	//对于ARM平台而言，该函数定义在 arch/arm/kernel/setup.c。
+	setup_arch(&command_line); 
 	mm_init_owner(&init_mm, &init_task);
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
