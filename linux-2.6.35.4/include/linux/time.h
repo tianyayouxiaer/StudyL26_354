@@ -99,6 +99,7 @@ static inline struct timespec timespec_sub(struct timespec lhs,
 
 extern struct timespec xtime;
 extern struct timespec wall_to_monotonic;
+//顺序锁，消除对xtime变量的同事访问而造成的竞争
 extern seqlock_t xtime_lock;
 
 extern void read_persistent_clock(struct timespec *ts);

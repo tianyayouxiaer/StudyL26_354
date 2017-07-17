@@ -153,6 +153,8 @@ __cacheline_aligned_in_smp DEFINE_SEQLOCK(xtime_lock);
  * - wall_to_monotonic is no longer the boot time, getboottime must be
  * used instead.
  */
+ // 墙上时间，一般系统启动后从rtc读取更新该值
+ // 通常每个tick更新一次，用户从xtime变量获得当前时间和日期
 struct timespec xtime __attribute__ ((aligned (16)));
 struct timespec wall_to_monotonic __attribute__ ((aligned (16)));
 static struct timespec total_sleep_time;

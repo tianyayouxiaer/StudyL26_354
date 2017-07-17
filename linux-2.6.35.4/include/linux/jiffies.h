@@ -9,6 +9,10 @@
 #include <asm/param.h>			/* for HZ */
 
 /*
+说明：  jiffies内核变量用来记录自系统启动以来产生的节拍次数。
+*/
+
+/*
  * The following defines establish the engineering parameters of the PLL
  * model. The HZ variable establishes the timer interrupt frequency, 100 Hz
  * for the SunOS kernel, 256 Hz for the Ultrix kernel and 1024 Hz for the
