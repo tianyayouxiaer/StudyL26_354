@@ -40,7 +40,61 @@
 
 /* These are for everybody (although not all archs will actually
    discard it in modules) */
+/*初始化代码的特点是：在系统启动运行，且一旦运行后马上退出内存，不再占用内存。
+ 初始化代码的内存结构  
+ _init_begin ------------------- 
+  
+  | .init.text | ---- __init 
+  
+  |-------------------| 
+  
+  | .init.data | ---- __initdata 
+  
+ _setup_start |-------------------| 
+  
+  | .init.setup | ---- __setup_param 
+  
+ __initcall_start |-------------------| 
+  
+  | .initcall1.init | ---- core_initcall 
+  
+  |-------------------| 
+  
+  | .initcall2.init | ---- postcore_initcall 
+  
+  |-------------------| 
+  
+  | .initcall3.init | ---- arch_initcall 
+  
+  |-------------------| 
+  
+  | .initcall4.init | ---- subsys_initcall 
+  
+  |-------------------| 
+  
+  | .initcall5.init | ---- fs_initcall 
+  
+  |-------------------| 
+  
+  | .initcall6.init | ---- device_initcall 
+  
+  |-------------------| 
+  
+  | .initcall7.init | ---- late_initcall 
+  
+ __initcall_end |-------------------| 
+  
+  | | 
+  
+  | ... ... ... | 
+  
+  | | 
+  
+ __init_end ------------------- 
+ */  
+ //标记内核启动时使用的初始化代码，内核启动完成后不再需要。以此标记的代码位于.init.text 内存区域。
 #define __init		__section(.init.text) __cold notrace
+// 标记内核启动时使用的初始化数据结构，内核启动完成后不再需要。以此标记的代码位于.init.data 内存区域
 #define __initdata	__section(.init.data)
 #define __initconst	__section(.init.rodata)
 #define __exitdata	__section(.exit.data)

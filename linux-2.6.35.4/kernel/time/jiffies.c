@@ -55,6 +55,8 @@ static cycle_t jiffies_read(struct clocksource *cs)
 	return (cycle_t) jiffies;
 }
 
+// 系统启动阶段，内核注册一个局域jiffies的clocksource
+// 它的精度只有1/HZ秒，rating值为1，
 struct clocksource clocksource_jiffies = {
 	.name		= "jiffies",
 	.rating		= 1, /* lowest valid rating*/
@@ -71,6 +73,8 @@ static int __init init_jiffies_clocksource(void)
 
 core_initcall(init_jiffies_clocksource);
 
+// 如果平台的代码没有提供定制的clocksource_default_clock函数，
+// 它将返回该clocksource：
 struct clocksource * __init __weak clocksource_default_clock(void)
 {
 	return &clocksource_jiffies;

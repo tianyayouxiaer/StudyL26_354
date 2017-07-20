@@ -15,6 +15,10 @@
 #include <linux/ktime.h>
 #include <linux/notifier.h>
 
+/*
+参见： http://blog.csdn.net/droidphone/article/details/8017604
+*/
+
 struct clock_event_device;
 
 /* Clock event mode commands */
@@ -75,23 +79,38 @@ enum clock_event_nofitiers {
  * @next_event:		local storage for the next event in oneshot mode
  * @retries:		number of forced programming retries
  */
+
+ /*
+ 时钟事件设备
+ clock_event_device主要用于实现普通定时器和高精度定时器，同时也用于产生tick事件，供给进程调度子系统使用。
+ 时钟事件设备的核心数据结构是clock_event_device结构，它代表着一个时钟硬件设备，该设备就好像是一个具有事件
+ 触发能力（通常就是指中断）的clocksource，它不停地计数，当计数值达到预先编程设定的数值那一刻，会引发一个
+ 时钟事件中断，继而触发该设备的事件处理回调函数，以完成对时钟事件的处理。
+ */
 struct clock_event_device {
 	const char		*name;
 	unsigned int		features;
-	u64			max_delta_ns;
-	u64			min_delta_ns;
+	u64			max_delta_ns;//可设置的最大时间差，单位是纳秒。
+	u64			min_delta_ns;//可设置的最小时间差，单位是纳秒。
 	u32			mult;
-	u32			shift;
-	int			rating;
+	u32			shift;//用于把纳秒转换为cycle。
+	int			rating;//设备的精度等级。
 	int			irq;
 	const struct cpumask	*cpumask;
+	//设置下一次时间触发的时间，使用类似于clocksource的cycle计数值（离现在的cycle差值）作为参数。
 	int			(*set_next_event)(unsigned long evt,
 						  struct clock_event_device *);
+	//设置时钟事件设备的工作模式。
 	void			(*set_mode)(enum clock_event_mode mode,
 					    struct clock_event_device *);
+	void			(*broadcast)(const struct cpumask *mask);
+	//时间中断到来时，machine底层的的中断服务程序会调用该回调，框架层利用该回调实现对时钟事件的处理。
 	void			(*event_handler)(struct clock_event_device *);
 	void			(*broadcast)(const struct cpumask *mask);
-	struct list_head	list;
+	struct list_head	list;//系统中注册的时钟事件设备用该字段挂在全局链表变量clockevent_devices上。
+	//该时钟事件设备的工作模式，两种主要的工作模式分别是：
+	//CLOCK_EVT_MODE_PERIODIC  周期触发模式，设置后按给定的周期不停地触发事件；
+	//CLOCK_EVT_MODE_ONESHOT  单次触发模式，只在设置好的触发时刻触发一次；
 	enum clock_event_mode	mode;
 	ktime_t			next_event;
 	unsigned long		retries;

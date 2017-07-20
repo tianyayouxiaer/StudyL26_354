@@ -18,6 +18,8 @@
 #include <asm/div64.h>
 #include <asm/io.h>
 
+//http://blog.csdn.net/droidphone/article/details/7975694
+
 /* clocksource cycle base type */
 typedef u64 cycle_t;
 struct clocksource;
@@ -157,13 +159,29 @@ extern u64 timecounter_cyc2time(struct timecounter *tc,
  * @suspend:		suspend function for the clocksource, if necessary
  * @resume:		resume function for the clocksource, if necessary
  */
+ // 内核用一个clocksource结构对真实的时钟源进行软件抽象
+
+ /* 
+ rating; //时钟源的精度:
+ 同一个设备下，可以有多个时钟源，每个时钟源的精度由驱动它的时钟频率决定，比如一个由10MHz时钟驱动的时钟源，他的精度就是100nS。
+ clocksource结构中有一个rating字段，代表着该时钟源的精度范围，它的取值范围如下：
+ 
+ 1--99： 不适合于用作实际的时钟源，只用于启动过程或用于测试；
+ 100--199：基本可用，可用作真实的时钟源，但不推荐；
+ 200--299：精度较好，可用作真实的时钟源；
+ 300--399：很好，精确的时钟源；
+ 400--499：理想的时钟源，如有可能就必须选择它作为时钟源
+ */
 struct clocksource {
 	/*
 	 * First part of structure is read mostly
 	 */
 	char *name;
 	struct list_head list;
-	int rating;
+	//时钟源的精度
+	int rating; 
+	// 时钟源本身不会产生中断，要获得时钟源的当前计数，只能通过主动调用它的read回调函数来获得当前的计数值，
+	// 注意这里只能获得计数值，也就是所谓的cycle，要获得相应的时间，必须要借助clocksource的mult和shift字段进行转换计算。
 	cycle_t (*read)(struct clocksource *cs);
 	int (*enable)(struct clocksource *cs);
 	void (*disable)(struct clocksource *cs);

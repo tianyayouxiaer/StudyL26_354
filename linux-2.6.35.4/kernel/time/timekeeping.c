@@ -21,10 +21,15 @@
 #include <linux/tick.h>
 #include <linux/stop_machine.h>
 
+/*
+	参考：http://blog.csdn.net/DroidPhone/article/details/7989566
+*/
+
+// 内核用timekeeper结构来组织与时间相关的数据
 /* Structure holding internal timekeeping values. */
 struct timekeeper {
 	/* Current clocksource used for timekeeping. */
-	struct clocksource *clock;
+	struct clocksource *clock; //目前timekeeper所使用的时钟源
 	/* The shift value of the current clocksource. */
 	int	shift;
 
@@ -155,12 +160,73 @@ __cacheline_aligned_in_smp DEFINE_SEQLOCK(xtime_lock);
  */
  // 墙上时间，一般系统启动后从rtc读取更新该值
  // 通常每个tick更新一次，用户从xtime变量获得当前时间和日期
+ 
+/* 
+ RTC时间	在PC中，RTC时间又叫CMOS时间，它通常由一个专门的计时硬件来实现，
+ 软件可以读取该硬件来获得年月日、时分秒等时间信息，而在嵌入式系统中，
+ 有使用专门的RTC芯片，也有直接把RTC集成到Soc芯片中，读取Soc中的某个寄
+ 存器即可获取当前时间信息。一般来说，RTC是一种可持续计时的，也就是说，
+ 不管系统是否上电，RTC中的时间信息都不会丢失，计时会一直持续进行，
+ 硬件上通常使用一个后备电池对RTC硬件进行单独的供电。因为RTC硬件的多样性，
+ 开发者需要为每种RTC时钟硬件提供相应的驱动程序，内核和用户空间通过驱动
+ 程序访问RTC硬件来获取或设置时间信息。
+*/
+
+/*
+ xtime  xtime和RTC时间一样，都是人们日常所使用的墙上时间，只是RTC时间的
+ 精度通常比较低，大多数情况下只能达到毫秒级别的精度，如果是使用外部的
+ RTC芯片，访问速度也比较慢，为此，内核维护了另外一个wall time时间：xtime，
+ 取决于用于对xtime计时的clocksource，它的精度甚至可以达到纳秒级别，
+ 因为xtime实际上是一个内存中的变量，它的访问速度非常快，内核大部分
+ 时间都是使用xtime来获得当前时间信息。xtime记录的是自1970年1月1日24时
+ 到当前时刻所经历的纳秒数。
+ */
 struct timespec xtime __attribute__ ((aligned (16)));
+
+/*
+monotonic time  该时间自系统开机后就一直单调地增加，它不像xtime可以因
+用户的调整时间而产生跳变，不过该时间不计算系统休眠的时间，也就是说，
+系统休眠时，monotoic时间不会递增。
+*/
+
+/*
+内核除了用xtime表示墙上的真实时间外，还维护了另外一个时间：monotonic time，
+可以把它理解为自系统启动以来所经过的时间，该时间只能单调递增，可以理解为
+xtime虽然正常情况下也是递增的，但是毕竟用户可以主动向前或向后调整墙上时间，
+从而修改xtime值。但是monotonic时间不可以往后退，系统启动后只能不断递增。
+奇怪的是，内核并没有直接定义一个这样的变量来记录monotonic时间，而是定义了
+一个变量wall_to_monotonic，记录了墙上时间和monotonic时间之间的偏移量，
+当需要获得monotonic时间时，把xtime和wall_to_monotonic相加即可，因为默认
+启动时monotonic时间为0，所以实际上wall_to_monotonic的值是一个负数，它和
+xtime同一时间被初始化，请参考timekeeping_init函数。
+*/
+
+/*
+计算monotonic时间要去除系统休眠期间花费的时间，内核用total_sleep_time
+记录休眠的时间，每次休眠醒来后重新累加该时间，并调整wall_to_monotonic的值，
+使其在系统休眠醒来后，monotonic时间不会发生跳变。因为wall_to_monotonic
+值被调整。
+
+wall_to_monotonic，记录了墙上时间和monotonic时间之间的偏移量，当需要获得monotonic时间时，
+把xtime和wall_to_monotonic相加即可，因为默认启动时monotonic时间为0，所以实际上
+wall_to_monotonic的值是一个负数，
+*/
 struct timespec wall_to_monotonic __attribute__ ((aligned (16)));
+
+/*
+计算monotonic时间要去除系统休眠期间花费的时间，内核用total_sleep_time记录休眠的时间，
+每次休眠醒来后重新累加该时间，并调整wall_to_monotonic的值，使其在系统休眠醒来后，
+monotonic时间不会发生跳变。因为wall_to_monotonic值被调整。
+*/
 static struct timespec total_sleep_time;
 
 /*
  * The raw monotonic time for the CLOCK_MONOTONIC_RAW posix clock.
+ */
+ /*
+ raw_time字段用来表示真正的硬件时间，也就是上面所说的raw monotonic time，
+ 它不受时间调整的影响，monotonic时间虽然也不受settimeofday的影响，
+ 但会受到ntp调整的影响，但是raw_time不受ntp的影响，他真的就是开完机后就单调地递增
  */
 struct timespec raw_time;
 
@@ -213,6 +279,7 @@ static void timekeeping_forward_now(void)
  *
  * Returns the time of day in a timespec.
  */
+ // 获取当前时间，返回timespec结构
 void getnstimeofday(struct timespec *ts)
 {
 	unsigned long seq;
@@ -293,6 +360,7 @@ EXPORT_SYMBOL_GPL(ktime_get_ts);
  *
  * NOTE: Users should be converted to using getnstimeofday()
  */
+ // 获取当前时间，返回timeval结构
 void do_gettimeofday(struct timeval *tv)
 {
 	struct timespec now;
@@ -387,6 +455,7 @@ static inline void timekeeping_forward_now(void) { }
  *
  * returns the time in ktime_t format
  */
+ // 获取系统启动以来所经过的c时间，不包含休眠时间，返回ktime类型
 ktime_t ktime_get(void)
 {
 	struct timespec now;
@@ -405,6 +474,7 @@ EXPORT_SYMBOL_GPL(ktime_get);
  * clock and the wall_to_monotonic offset and stores the result
  * in normalized timespec format in the variable pointed to by @ts.
  */
+ // 获取系统启动以来所经过的c时间，不包含休眠时间，返回timespec结构
 void ktime_get_ts(struct timespec *ts)
 {
 	struct timespec tomono;
@@ -524,24 +594,41 @@ void __attribute__((weak)) read_boot_clock(struct timespec *ts)
 /*
  * timekeeping_init - Initializes the clocksource and common timekeeping values
  */
+ 
+//该函数在start_kernel的初始化序列中被调用
 void __init timekeeping_init(void)
 {
 	struct clocksource *clock;
 	unsigned long flags;
 	struct timespec now, boot;
 
+	// 先从RTC中获取当前时间
+	// read_persistent_clock和read_boot_clock是平台级的函数，
+	// 分别用于获取RTC硬件时间和启动时的时间
 	read_persistent_clock(&now);
 	read_boot_clock(&boot);
 
+	// 然后对锁和ntp进行必要的初始化
 	write_seqlock_irqsave(&xtime_lock, flags);
 
 	ntp_init();
 
+	// 接着获取默认的clocksource，如果平台没有重新实现clocksource_default_clock函数，
+	// 默认的clocksource就是基于jiffies的clocksource_jiffies，然后通过timekeeper_setup_inernals
+	// 内部函数把timekeeper和clocksource进行关联：
 	clock = clocksource_default_clock();
 	if (clock->enable)
 		clock->enable(clock);
 	timekeeper_setup_internals(clock);
 
+	// 利用RTC的当前时间，初始化xtime，raw_time，wall_to_monotonic等字段
+	
+	// xtime一旦初始化完成后，timekeeper就开始独立于RTC，利用自身关联的
+	// clocksource进行时间的更新操作，根据内核的配置项的不同，更新时间的
+	// 操作发生的频度也不尽相同，如果没有配置NO_HZ选项，通常每个tick的定时中断周期，
+	// do_timer会被调用一次，相反，如果配置了NO_HZ选项，可能会在好几个tick后，
+	// do_timer才会被调用一次，当然传入的参数是本次更新离上一次更新时相隔了多少个tick周期，
+	// 系统会保证在clocksource的max_idle_ns时间内调用do_timer，以防止clocksource的溢出：
 	xtime.tv_sec = now.tv_sec;
 	xtime.tv_nsec = now.tv_nsec;
 	raw_time.tv_sec = 0;
@@ -550,6 +637,9 @@ void __init timekeeping_init(void)
 		boot.tv_sec = xtime.tv_sec;
 		boot.tv_nsec = xtime.tv_nsec;
 	}
+
+	// 初始化代表实时时间和monotonic时间之间偏移量的offs_real字段，
+	// total_sleep_time字段初始化为0
 	set_normalized_timespec(&wall_to_monotonic,
 				-boot.tv_sec, -boot.tv_nsec);
 	total_sleep_time.tv_sec = 0;
@@ -876,6 +966,7 @@ void update_wall_time(void)
  * basically means that however wrong your real time clock is at boot time,
  * you get the right time here).
  */
+ // 获取系统启动时刻的实时时间
 void getboottime(struct timespec *ts)
 {
 	struct timespec boottime = {
@@ -897,6 +988,7 @@ void monotonic_to_bootbased(struct timespec *ts)
 }
 EXPORT_SYMBOL_GPL(monotonic_to_bootbased);
 
+// 返回xtime中的秒计数值
 unsigned long get_seconds(void)
 {
 	return xtime.tv_sec;
@@ -908,6 +1000,7 @@ struct timespec __current_kernel_time(void)
 	return xtime;
 }
 
+// 返回内核最后一次更新的xtime时间，不累计最后一次更新至今clocksource的计数值
 struct timespec current_kernel_time(void)
 {
 	struct timespec now;

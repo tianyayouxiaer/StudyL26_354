@@ -22,11 +22,18 @@
 
 #include "tick-internal.h"
 
+/*
+全局变量clockevent_devices
+*/
+
 /* The registered clock event devices */
+//系统中所有注册的clock_event_device都会挂在该链表下面
 static LIST_HEAD(clockevent_devices);
 static LIST_HEAD(clockevents_released);
 
 /* Notification for clock events */
+//通用时间框架初始化时会注册一个通知链（NOTIFIER），当系统中的时钟时间设备的
+//状态发生变化时，利用该通知链通知系统的其它模块。
 static RAW_NOTIFIER_HEAD(clockevents_chain);
 
 /* Protection for the above */

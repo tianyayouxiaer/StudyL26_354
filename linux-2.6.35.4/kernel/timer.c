@@ -1297,7 +1297,9 @@ void run_local_timers(void)
  * without sampling the sequence number in xtime_lock.
  * jiffies is defined in the linker script...
  */
-
+ // 通常每个tick的定时中断周期，do_timer会被调用一次
+ // jiffies_64变量被相应地累加，然后在update_wall_time中完成xtime等时间的更新操作，
+ // 更新时间的核心操作就是读取关联clocksource的计数值，累加到xtime等字段中
 void do_timer(unsigned long ticks)
 {
 	jiffies_64 += ticks;

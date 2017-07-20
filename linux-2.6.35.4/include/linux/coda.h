@@ -112,6 +112,8 @@ typedef unsigned long long u_quad_t;
 #define cdev_t dev_t
 #endif
 
+// tv_sec 时间戳
+// tv_nsec 自上一秒开始经过的ns数
 #ifdef __CYGWIN32__
 struct timespec {
         time_t  tv_sec;         /* seconds */

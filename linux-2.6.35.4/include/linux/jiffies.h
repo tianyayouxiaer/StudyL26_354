@@ -85,6 +85,7 @@
 extern u64 __jiffy_data jiffies_64;
 extern unsigned long volatile __jiffy_data jiffies;
 
+//读取64位的jiffies，在64位系统上，jiffies就是jiffies_64
 #if (BITS_PER_LONG < 64)
 u64 get_jiffies_64(void);
 #else
@@ -107,10 +108,14 @@ static inline u64 get_jiffies_64(void)
  * good compiler would generate better code (and a really good compiler
  * wouldn't care). Gcc is currently neither.
  */
+// 以下四个宏，可有效地解决由于jiffies溢出而造成程序逻辑出错的情况
+
+// 首先确保两个输入参数a和b的数据类型为unsigned long，然后才执行实际的比较
 #define time_after(a,b)		\
 	(typecheck(unsigned long, a) && \
 	 typecheck(unsigned long, b) && \
 	 ((long)(b) - (long)(a) < 0))
+
 #define time_before(a,b)	time_after(b,a)
 
 #define time_after_eq(a,b)	\

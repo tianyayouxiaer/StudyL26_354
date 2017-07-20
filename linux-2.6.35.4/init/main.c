@@ -634,6 +634,7 @@ asmlinkage void __init start_kernel(void)
 	hrtimers_init();
 	softirq_init();
 	timekeeping_init();
+	// 初始化计时体系结构
 	time_init();
 	profile_init();
 	if (!irqs_disabled())

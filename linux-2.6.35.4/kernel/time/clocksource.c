@@ -172,6 +172,7 @@ clocks_calc_mult_shift(u32 *mult, u32 *shift, u32 from, u32 to, u32 minsec)
  */
 static struct clocksource *curr_clocksource;
 static LIST_HEAD(clocksource_list);
+// 定义一个互斥锁
 static DEFINE_MUTEX(clocksource_mutex);
 static char override_name[32];
 static int finished_booting;
@@ -192,6 +193,11 @@ static void __clocksource_change_rating(struct clocksource *cs, int rating);
 
 /*
  * Interval: 0.5sec Threshold: 0.0625s
+ */
+ /*
+ 系统中可能同时会注册多个clocksource，各个clocksource的精度和稳定性各不相同，
+ 为了筛选这些注册的clocksource，内核启用了一个定时器用于监控这些clocksource的性能，
+ 定时器的周期设为0.5秒：
  */
 #define WATCHDOG_INTERVAL (HZ >> 1)
 #define WATCHDOG_THRESHOLD (NSEC_PER_SEC >> 4)
@@ -360,6 +366,14 @@ static void clocksource_resume_watchdog(void)
 	spin_unlock_irqrestore(&watchdog_lock, flags);
 }
 
+/*
+当有新的clocksource被注册时，除了会挂在全局链表clocksource_list外，
+还会同时挂在一个watchdog链表上：watchdog_list。
+
+定时器周期性地（0.5秒）检查watchdog_list上的clocksource，WATCHDOG_THRESHOLD的值定义为0.0625秒，
+如果在0.5秒内，clocksource的偏差大于这个值就表示这个clocksource是不稳定的，定时器的回调函数通过
+clocksource_watchdog_kthread线程标记该clocksource，并把它的rate修改为0，表示精度极差。
+*/
 static void clocksource_enqueue_watchdog(struct clocksource *cs)
 {
 	unsigned long flags;
@@ -495,6 +509,7 @@ void clocksource_touch_watchdog(void)
  * @cs:         Pointer to clocksource
  *
  */
+ // 时钟源的最大延时
 static u64 clocksource_max_deferment(struct clocksource *cs)
 {
 	u64 max_nsecs, max_cycles;
@@ -540,6 +555,11 @@ static u64 clocksource_max_deferment(struct clocksource *cs)
  *
  * Select the clocksource with the best rating, or the clocksource,
  * which is selected by userspace override.
+ */
+ /* 
+	每次新的clocksource注册进来，都会触发clocksource_select函数被调用，
+	它按照rating值选择最好的clocksource，并记录在全局变量curr_clocksource中，
+	然后通过timekeeping_notify函数通知timekeeping，当前clocksource已经变更.
  */
 static void clocksource_select(void)
 {
@@ -590,6 +610,15 @@ static inline void clocksource_select(void) { }
  * We use fs_initcall because we want this to start before
  * device_initcall but after subsys_initcall.
  */
+ /*
+ 	在初始化的后段，clocksource的代码会把全局变量
+ 	curr_clocksource设置为上述的默认的clocksource，即clocksource_jiffies
+ 	
+ 	当然，如果平台级的代码在初始化时也会注册真正的硬件clocksource，
+ 	所以经过clocksource_select()函数后，curr_clocksource将会被设为最合适的clocksource。
+ 	如果clocksource_select函数认为需要切换更好的时钟源，它会通过timekeeping_notify
+ 	通知timekeeping系统，使用新的clocksource进行时间计数和更新操作。
+ */
 static int __init clocksource_done_booting(void)
 {
 	mutex_lock(&clocksource_mutex);
@@ -613,6 +642,8 @@ fs_initcall(clocksource_done_booting);
 /*
  * Enqueue the clocksource sorted by rating
  */
+ // 按clocksource的rating的大小，把该clocksource按顺序挂在全局链表clocksource_list上，rating值越大，
+ // 在链表上的位置越靠前。
 static void clocksource_enqueue(struct clocksource *cs)
 {
 	struct list_head *entry = &clocksource_list;
@@ -624,7 +655,6 @@ static void clocksource_enqueue(struct clocksource *cs)
 			entry = &tmp->list;
 	list_add(&cs->list, entry);
 }
-
 
 /*
  * Maximum time we expect to go between ticks. This includes idle
@@ -679,14 +709,18 @@ EXPORT_SYMBOL_GPL(__clocksource_register_scale);
  *
  * Returns -EBUSY if registration fails, zero otherwise.
  */
+ 
 int clocksource_register(struct clocksource *cs)
 {
 	/* calculate max idle time permitted for this clocksource */
 	cs->max_idle_ns = clocksource_max_deferment(cs);
 
 	mutex_lock(&clocksource_mutex);
+	// 按照rate插入链表
 	clocksource_enqueue(cs);
+	// rating值选择最好的clocksource，并记录在全局变量curr_clocksource中
 	clocksource_select();
+	// 插入watchdog链表
 	clocksource_enqueue_watchdog(cs);
 	mutex_unlock(&clocksource_mutex);
 	return 0;
