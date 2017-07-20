@@ -2966,6 +2966,7 @@ calc_load(unsigned long load, unsigned long exp, unsigned long active)
  */
 void calc_global_load(void)
 {
+	//每10个tick，更新一次cpu的负载信息；
 	unsigned long upd = calc_load_update + 10;
 	long active;
 

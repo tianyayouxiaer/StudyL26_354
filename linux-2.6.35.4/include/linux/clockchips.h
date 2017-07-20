@@ -87,6 +87,11 @@ enum clock_event_nofitiers {
  触发能力（通常就是指中断）的clocksource，它不停地计数，当计数值达到预先编程设定的数值那一刻，会引发一个
  时钟事件中断，继而触发该设备的事件处理回调函数，以完成对时钟事件的处理。
  */
+ /*
+ 钟事件设备的核心数据结构是clock_event_device结构，它代表着一个时钟硬件设备，该设备就好像是一个
+ 具有事件触发能力（通常就是指中断）的clocksource，它不停地计数，当计数值达到预先编程设定的数值
+ 那一刻，会引发一个时钟事件中断，继而触发该设备的事件处理回调函数，以完成对时钟事件的处理
+ */
 struct clock_event_device {
 	const char		*name;
 	unsigned int		features;

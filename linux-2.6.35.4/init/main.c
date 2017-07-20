@@ -578,6 +578,7 @@ asmlinkage void __init start_kernel(void)
  * enable them
  */
 	lock_kernel();
+	//注册tick_notifier到时钟事件通知链中
 	tick_init();
 	boot_cpu_init();
 	page_address_init();

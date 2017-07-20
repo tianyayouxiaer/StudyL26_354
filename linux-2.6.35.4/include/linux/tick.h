@@ -8,6 +8,12 @@
 
 #include <linux/clockchips.h>
 
+/*
+tick_device是基于clock_event_device的进一步封装，用于代替原有的时钟滴答中断，
+给内核提供tick事件，以完成进程的调度和进程信息统计，负载平衡和时间更新等操作。
+*/
+
+
 #ifdef CONFIG_GENERIC_CLOCKEVENTS
 
 enum tick_device_mode {
@@ -15,6 +21,9 @@ enum tick_device_mode {
 	TICKDEV_MODE_ONESHOT,
 };
 
+// 当内核没有配置成支持高精度定时器时，系统的tick由tick_device产生，
+// tick_device其实是clock_event_device的简单封装，它内嵌了一个clock_event_device
+// 指针和它的工作模式：
 struct tick_device {
 	struct clock_event_device *evtdev;
 	enum tick_device_mode mode;

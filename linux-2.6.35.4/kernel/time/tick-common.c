@@ -144,6 +144,14 @@ void tick_setup_periodic(struct clock_event_device *dev, int broadcast)
 /*
  * Setup the tick device
  */
+ /*
+ 因为启动期间，第一个注册的tick_device必然工作在TICKDEV_MODE_PERIODIC模式，
+ 所以tick_setup_periodic会设置clock_event_device的事件回调字段event_handler
+ 为tick_handle_periodic，工作一段时间后，就算有新的支持TICKDEV_MODE_ONESHOT
+ 模式的clock_event_device需要替换，再次进入tick_setup_device函数，
+ tick_setup_oneshot的handler参数也是之前设置的tick_handle_periodic函数，
+ 所以我们考察tick_handle_periodic即可：
+ */
 static void tick_setup_device(struct tick_device *td,
 			      struct clock_event_device *newdev, int cpu,
 			      const struct cpumask *cpumask)
@@ -202,6 +210,8 @@ static void tick_setup_device(struct tick_device *td,
 /*
  * Check, if the new registered device should be used.
  */
+ // 比对当前cpu所使用的与新注册的clock_event_device之间的特性，如果认为新
+ // 的clock_event_device更好，则会进行切换工作。
 static int tick_check_new_device(struct clock_event_device *newdev)
 {
 	struct clock_event_device *curdev;
@@ -211,14 +221,18 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 
 	raw_spin_lock_irqsave(&tick_device_lock, flags);
 
+	// 首先，该函数先判断注册的clock_event_device是否可用于本cpu
 	cpu = smp_processor_id();
 	if (!cpumask_test_cpu(cpu, newdev->cpumask))
 		goto out_bc;
 
+	// 从per-cpu变量中取出本cpu的tick_device
 	td = &per_cpu(tick_cpu_device, cpu);
 	curdev = td->evtdev;
 
 	/* cpu local device ? */
+	// 如果不是本地clock_event_device，会做进一步的判断：如果不能把irq绑定到本cpu，
+	// 则放弃处理，如果本cpu已经有了一个本地clock_event_device，也放弃处理：
 	if (!cpumask_equal(newdev->cpumask, cpumask_of(cpu))) {
 
 		/*
@@ -240,18 +254,20 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 	 * If we have an active device, then check the rating and the oneshot
 	 * feature.
 	 */
+	 // 如果本cpu已经有了一个clock_event_device，则根据是否支持单触发模式和它的rating值，
+	 // 决定是否替换原来旧的clock_event_device：
 	if (curdev) {
 		/*
 		 * Prefer one shot capable devices !
 		 */
 		if ((curdev->features & CLOCK_EVT_FEAT_ONESHOT) &&
 		    !(newdev->features & CLOCK_EVT_FEAT_ONESHOT))
-			goto out_bc;
+			goto out_bc;// // 新的不支持单触发，但旧的支持，所以不能替换 
 		/*
 		 * Check the rating
 		 */
 		if (curdev->rating >= newdev->rating)
-			goto out_bc;
+			goto out_bc;// // 旧的比新的精度高，不能替换
 	}
 
 	/*
@@ -264,6 +280,12 @@ static int tick_check_new_device(struct clock_event_device *newdev)
 		curdev = NULL;
 	}
 	clockevents_exchange_device(curdev, newdev);
+	/*
+		重新绑定当前cpu的tick_device和新注册的clock_event_device，
+		如果发现是当前cpu第一次注册tick_device，就把它设置为TICKDEV_MODE_PERIODIC模式，
+		如果是替换旧的tick_device，则根据新的tick_device的特性，设置为TICKDEV_MODE_PERIODIC
+		或TICKDEV_MODE_ONESHOT模式。
+	*/
 	tick_setup_device(td, newdev, cpu, cpumask_of(cpu));
 	if (newdev->features & CLOCK_EVT_FEAT_ONESHOT)
 		tick_oneshot_notify();
@@ -410,6 +432,8 @@ static struct notifier_block tick_notifier = {
  *
  * Register the notifier with the clockevents framework
  */
+ // 简单地调用clockevents_register_notifier，同时把类型为notifier_block的tick_notifier
+ // 作为参数传入
 void __init tick_init(void)
 {
 	clockevents_register_notifier(&tick_notifier);

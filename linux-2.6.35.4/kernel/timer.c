@@ -50,6 +50,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/timer.h>
 
+//参考：http://blog.csdn.net/DroidPhone/article/details/8051405
+
 u64 jiffies_64 __cacheline_aligned_in_smp = INITIAL_JIFFIES;
 
 EXPORT_SYMBOL(jiffies_64);
@@ -72,11 +74,15 @@ struct tvec_root {
 	struct list_head vec[TVR_SIZE];
 };
 
+/* 为了较好地利用cache line，也为了避免cpu之间的互锁，内核为多核处理器中的每个cpu单独
+	分配了管理定时器的相关数据结构和资源，每个cpu独立地管理属于自己的定时器。
+*/
 struct tvec_base {
 	spinlock_t lock;
-	struct timer_list *running_timer;
-	unsigned long timer_jiffies;
-	unsigned long next_timer;
+	struct timer_list *running_timer;//当前cpu正在处理的定时器所对应的timer_list结构
+	unsigned long timer_jiffies;//该字段表示当前cpu定时器所经历过的jiffies数，大多数情况下
+	unsigned long next_timer;//该字段指向该cpu下一个即将到期的定时器
+	//tv1--tv5  这5个字段用于对定时器进行分组
 	struct tvec_root tv1;
 	struct tvec tv2;
 	struct tvec tv3;
@@ -84,6 +90,7 @@ struct tvec_base {
 	struct tvec tv5;
 } ____cacheline_aligned;
 
+//内核为每个cpu定义了一个tvec_base结构指针
 struct tvec_base boot_tvec_bases;
 EXPORT_SYMBOL(boot_tvec_bases);
 static DEFINE_PER_CPU(struct tvec_base *, tvec_bases) = &boot_tvec_bases;
@@ -331,6 +338,7 @@ EXPORT_SYMBOL_GPL(round_jiffies_up_relative);
  * By setting the slack to -1, a percentage of the delay is used
  * instead.
  */
+ // 设定timer允许的到期时刻的最大延迟，用于对精度不敏感的定时器
 void set_timer_slack(struct timer_list *timer, int slack_hz)
 {
 	timer->slack = slack_hz;
@@ -346,6 +354,45 @@ static inline void set_running_timer(struct tvec_base *base,
 #endif
 }
 
+/*
+计算定时器到期时间和所属cpu的tvec_base结构中的timer_jiffies字段的差值，记为idx；
+根据idx的值，选择该定时器应该被放到tv1--tv5中的哪一个链表数组中，可以认为tv1-tv5
+分别占据一个32位数的不同比特位，tv1占据最低的8位，tv2占据紧接着的6位，然后tv3再占位，
+以此类推，最高的6位分配给tv5。
+
+确定链表数组后，接着要确定把该定时器放入数组中的哪一个链表中，如果时间差idx小于256，
+按规则要放入tv1中，因为tv1包含了256个链表，所以可以简单地使用timer_list.expires的
+低8位作为数组的索引下标，把定时器链接到tv1中相应的链表中即可。如果时间差idx的值在
+256--18383之间，则需要把定时器放入tv2中，同样的，使用timer_list.expires的8--14位
+作为数组的索引下标，把定时器链接到tv2中相应的链表中,。定时器要加入tv3 tv4 tv5使
+用同样的原理。经过这样分组后的定时器，在后续的tick事件中，系统可以很方便地定位并取
+出相应的到期定时器进行处理。
+
+系统中的定时器按到期时间有规律地放置在tv1--tv5各个链表数组中，其中tv1中放置着在接下来
+的256个jiffies即将到期的定时器列表，需要注意的是，并不是tv1.vec[0]中放置着马上到期的
+定时器列表，tv1.vec[1]中放置着将在jiffies+1到期的定时器列表。因为base.timer_jiffies
+的值一直在随着系统的运行而动态地增加，原则上是每个tick事件会加1，base.timer_jiffies
+代表者该cpu定时器系统当前时刻，定时器也是动态地加入头256个链表tv1中，
+
+定时器加入tv1中使用的下标索引是定时器到期时间expires的低8位，所以假设当前的
+base.timer_jiffies值是0x34567826，则马上到期的定时器是在tv1.vec[0x26]中，
+如果这时候系统加入一个在jiffies值0x34567828到期的定时器，他将会加入到tv1.vec[0x28]中，
+运行两个tick后，base.timer_jiffies的值会变为0x34567828，很显然，在每次tick事件中，
+定时器系统只要以base.timer_jiffies的低8位作为索引，取出tv1中相应的链表，
+里面正好包含了所有在该jiffies值到期的定时器列表。
+
+那什么时候处理tv2--tv5中的定时器？每当base.timer_jiffies的低8位为0值时，
+这表明base.timer_jiffies的第8-13位有进位发生，这6位正好代表着tv2，
+这时只要按base.timer_jiffies的第8-13位的值作为下标，移出tv2中对应的定时器链表，
+然后用internal_add_timer把它们从新加入到定时器系统中来，因为这些定时器一定
+会在接下来的256个tick期间到期，所以它们肯定会被加入到tv1数组中，这样就完成了
+tv2往tv1迁移的过程。同样地，当base.timer_jiffies的第8-13位为0时，
+这表明base.timer_jiffies的第14-19位有进位发生，这6位正好代表着tv3，
+按base.timer_jiffies的第14-19位的值作为下标，移出tv3中对应的定时器链表，
+然后用internal_add_timer把它们从新加入到定时器系统中来，显然它们会被加入到tv2中，
+从而完成tv3到tv2的迁移，tv4，tv5的处理可以以此作类推。
+
+*/
 static void internal_add_timer(struct tvec_base *base, struct timer_list *timer)
 {
 	unsigned long expires = timer->expires;
@@ -727,7 +774,8 @@ out_unlock:
  * but will not re-activate and modify already deleted timers.
  *
  * It is useful for unserialized use of timers.
- */
+ */ 
+ // 只有当timer已经处在激活状态时，才修改timer的到期时刻
 int mod_timer_pending(struct timer_list *timer, unsigned long expires)
 {
 	return __mod_timer(timer, expires, true, TIMER_NOT_PINNED);
@@ -860,6 +908,7 @@ EXPORT_SYMBOL(add_timer);
  *
  * This is not very scalable on SMP. Double adds are not possible.
  */
+ // 在指定的cpu上添加定时器
 void add_timer_on(struct timer_list *timer, int cpu)
 {
 	struct tvec_base *base = per_cpu(tvec_bases, cpu);
@@ -975,6 +1024,7 @@ EXPORT_SYMBOL(try_to_del_timer_sync);
  *
  * The function returns whether it has deactivated a pending timer or not.
  */
+ // 如果该timer正在被处理中，则等待timer处理完成才移除该timer
 int del_timer_sync(struct timer_list *timer)
 {
 #ifdef CONFIG_LOCKDEP
@@ -996,13 +1046,23 @@ int del_timer_sync(struct timer_list *timer)
 EXPORT_SYMBOL(del_timer_sync);
 #endif
 
+/*
+通过上面的讨论，我们可以发现，内核的低分辨率定时器的实现非常精妙，既实现了大量定时器的管理，
+又实现了快速的O(1)查找到期定时器的能力，利用巧妙的数组结构，使得只需在间隔256个tick时间才处
+理一次迁移操作，5个数组就好比是5个齿轮，它们随着base->timer_jifffies的增长而不停地转动，
+每次只需处理第一个齿轮的某一个齿节，低一级的齿轮转动一圈，高一级的齿轮转动一个齿，
+同时自动把即将到期的定时器迁移到上一个齿轮中，所以低分辨率定时器通常又被叫做时间轮：time wheel。
+事实上，它的实现是一个很好的空间换时间软件算法。
+
+*/
+
 static int cascade(struct tvec_base *base, struct tvec *tv, int index)
 {
 	/* cascade all the timers from tv up one level */
 	struct timer_list *timer, *tmp;
 	struct list_head tv_list;
 
-	list_replace_init(tv->vec + index, &tv_list);
+	list_replace_init(tv->vec + index, &tv_list);// 移除需要迁移的链表
 
 	/*
 	 * We are removing _all_ timers from the list, so we
@@ -1010,6 +1070,7 @@ static int cascade(struct tvec_base *base, struct tvec *tv, int index)
 	 */
 	list_for_each_entry_safe(timer, tmp, &tv_list, entry) {
 		BUG_ON(tbase_get_base(timer->base) != base);
+		//重新加入到定时器系统中，实际上将会迁移到下一级的tv数组中
 		internal_add_timer(base, timer);
 	}
 
@@ -1066,26 +1127,41 @@ static void call_timer_fn(struct timer_list *timer, void (*fn)(unsigned long),
  * This function cascades all vectors and executes all expired timer
  * vectors.
  */
+ /*
+ 每个tick事件到来时，内核会在tick定时中断处理期间激活定时器软中断：TIMER_SOFTIRQ，
+ 软件中断（softIRQ。TIMER_SOFTIRQ的执行函数是__run_timers，
+ 它实现了本节讨论的逻辑，取出tv1中到期的定时器，执行定时器的回调函数，
+ 由此可见，低分辨率定时器的回调函数是执行在软件中断上下文中的，
+ 这点在写定时器的回调函数时需要注意。
+ */
 static inline void __run_timers(struct tvec_base *base)
 {
 	struct timer_list *timer;
 
 	spin_lock_irq(&base->lock);
+	
+	/* 同步jiffies，在NO_HZ情况下，base->timer_jiffies可能落后不止一个tick  */
 	while (time_after_eq(jiffies, base->timer_jiffies)) {
 		struct list_head work_list;
 		struct list_head *head = &work_list;
+		/*  计算到期定时器链表在tv1中的索引  */ 
 		int index = base->timer_jiffies & TVR_MASK;
 
 		/*
 		 * Cascade timers:
 		 */
+		 /* tv2--tv5定时器列表迁移处理     */ 
 		if (!index &&
 			(!cascade(base, &base->tv2, INDEX(0))) &&
 				(!cascade(base, &base->tv3, INDEX(1))) &&
 					!cascade(base, &base->tv4, INDEX(2)))
 			cascade(base, &base->tv5, INDEX(3));
+			
+		/*  该cpu定时器系统运行时间递增一个tick   */ 
 		++base->timer_jiffies;
+		/*  取出到期的定时器链表  */ 
 		list_replace_init(base->tv1.vec + index, &work_list);
+		 /*  遍历所有的到期定时器  */
 		while (!list_empty(head)) {
 			void (*fn)(unsigned long);
 			unsigned long data;
@@ -1096,10 +1172,12 @@ static inline void __run_timers(struct tvec_base *base)
 
 			timer_stats_account_timer(timer);
 
+			/* 标记正在处理的定时器  */
 			set_running_timer(base, timer);
 			detach_timer(timer, 1);
 
 			spin_unlock_irq(&base->lock);
+			/*  调用定时器的回调函数  */
 			call_timer_fn(timer, fn, data);
 			spin_lock_irq(&base->lock);
 		}
@@ -1254,6 +1332,8 @@ unsigned long get_next_timer_interrupt(unsigned long now)
  * Called from the timer interrupt handler to charge one tick to the current
  * process.  user_tick is 1 if the tick is user time, 0 for system.
  */
+ // 当cpu的每个tick事件到来时，在事件处理中断中，update_process_times会被调用，
+ // 该函数会进一步调用run_local_timers，run_local_timers会触发TIMER_SOFTIRQ软中断：
 void update_process_times(int user_tick)
 {
 	struct task_struct *p = current;
@@ -1711,7 +1791,7 @@ static struct notifier_block __cpuinitdata timers_nb = {
 	.notifier_call	= timer_cpu_notify,
 };
 
-
+//系统初始化时，start_kernel会调用定时器系统的初始化函数init_timers：
 void __init init_timers(void)
 {
 	int err = timer_cpu_notify(&timers_nb, (unsigned long)CPU_UP_PREPARE,
@@ -1720,7 +1800,8 @@ void __init init_timers(void)
 	init_timer_stats();
 
 	BUG_ON(err != NOTIFY_OK);
-	register_cpu_notifier(&timers_nb);
+	register_cpu_notifier(&timers_nb);///* 注册cpu notify，以便在hotplug时在cpu之间进行定时器的迁
+	//open_softirq把run_timer_softirq注册为TIMER_SOFTIRQ的处理函数
 	open_softirq(TIMER_SOFTIRQ, run_timer_softirq);
 }
 

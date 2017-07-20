@@ -23,8 +23,23 @@
 #include "tick-internal.h"
 
 /*
-全局变量clockevent_devices
+http://blog.csdn.net/DroidPhone/article/details/8017604
+
+早期的内核版本中，进程的调度基于一个称之为tick的时钟滴答，通常使用时钟中断来定时地产生tick信号，
+每次tick定时中断都会进行进程的统计和调度，并对tick进行计数，记录在一个jiffies变量中，定时器的设
+计也是基于jiffies。这时候的内核代码中，几乎所有关于时钟的操作都是在machine级的代码中实现，很多
+公共的代码要在每个平台上重复实现。随后，随着通用时钟框架的引入，内核需要支持高精度的定时器，为此，
+通用时间框架为定时器硬件定义了一个标准的接口：clock_event_device，machine级的代码只要按这个标准
+接口实现相应的硬件控制功能，剩下的与平台无关的特性则统一由通用时间框架层来实现。
 */
+
+/*
+在软件架构上看，clock_event_device被分为了两层，与硬件相关的被放在了machine层，而与硬件无关的通
+用代码则被集中到了通用时间框架层，这符合内核对软件的设计需求，平台的开发者只需实现平台相关的接口
+即可，无需关注复杂的上层时间框架。
+
+
+*
 
 /* The registered clock event devices */
 //系统中所有注册的clock_event_device都会挂在该链表下面
@@ -143,6 +158,9 @@ int clockevents_program_event(struct clock_event_device *dev, ktime_t expires,
 /**
  * clockevents_register_notifier - register a clock events change listener
  */
+ // clockevents_register_notifier注册了一个通知链, 
+ // 当系统中的clock_event_device状态发生变化时（新增，删除，挂起，唤醒等等），
+ // tick_notifier中的notifier_call字段中设定的回调函数tick_notify就会被调用
 int clockevents_register_notifier(struct notifier_block *nb)
 {
 	unsigned long flags;
@@ -195,6 +213,7 @@ void clockevents_register_device(struct clock_event_device *dev)
 	raw_spin_lock_irqsave(&clockevents_lock, flags);
 
 	list_add(&dev->list, &clockevent_devices);
+	// 触发框架层事先注册好的通知链，
 	clockevents_do_notify(CLOCK_EVT_NOTIFY_ADD, dev);
 	clockevents_notify_released();
 

@@ -7,6 +7,13 @@
 #include <linux/debugobjects.h>
 #include <linux/stringify.h>
 
+/*
+参考：http://blog.csdn.net/DroidPhone/article/details/8051405
+早期的内核版本中，内核并不支持高精度定时器，理所当然只能使用这种低分辨率定时器，
+我们有时候把这种基于HZ的定时器机制成为时间轮：time wheel。
+
+*/
+
 struct tvec_base;
 
 struct timer_list {
@@ -14,14 +21,14 @@ struct timer_list {
 	 * All fields that change during normal runtime grouped to the
 	 * same cacheline
 	 */
-	struct list_head entry;
-	unsigned long expires;
-	struct tvec_base *base;
+	struct list_head entry;//用于把一组定时器组成一个链表
+	unsigned long expires;// 该定时器的到期时刻，也就是期望定时器到期时刻的jiffies计数值
+	struct tvec_base *base;// 每个cpu拥有一个自己的用于管理定时器的tvec_base结构，该字段指向该定时器所属的cpu所对应tvec_base结构。
 
-	void (*function)(unsigned long);
-	unsigned long data;
+	void (*function)(unsigned long);//定时器到期时，系统将会调用该回调函数，用于响应该定时器的到期事件
+	unsigned long data;//该字段用于上述回调函数的参数
 
-	int slack;
+	int slack;//对有些对到期时间精度不太敏感的定时器，到期时刻允许适当地延迟一小段时间，该字段用于计算每次延迟的HZ数。
 
 #ifdef CONFIG_TIMER_STATS
 	void *start_site;
