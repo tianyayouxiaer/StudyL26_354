@@ -203,6 +203,10 @@ static void clockevents_notify_released(void)
  * clockevents_register_device - register a clock event device
  * @dev:	device to register
  */
+//  向系统注册时钟事件设备  
+//  函数任务：  
+//      1.添加设备到clockevent_devices链表  
+//      2.通知tick device管理机制有clockevent设备注册
 void clockevents_register_device(struct clock_event_device *dev)
 {
 	unsigned long flags;
@@ -211,9 +215,10 @@ void clockevents_register_device(struct clock_event_device *dev)
 	BUG_ON(!dev->cpumask);
 
 	raw_spin_lock_irqsave(&clockevents_lock, flags);
+	//将设备添加到clockevent_devices链表
 
 	list_add(&dev->list, &clockevent_devices);
-	// 触发框架层事先注册好的通知链，
+	//向系统通知有新设备注册，
 	clockevents_do_notify(CLOCK_EVT_NOTIFY_ADD, dev);
 	clockevents_notify_released();
 
@@ -262,6 +267,12 @@ void clockevents_exchange_device(struct clock_event_device *old,
 /**
  * clockevents_notify - notification about relevant events
  */
+ //  向clockevents_chain通知clockevents事件  
+//   函数主要任务：  
+//      1.通知clockevents_chain  
+//      2.当cpu offline时，清空clockevents_released链表，删除与此cpu相关的clockevent  
+//   注：clockevents_released保存所有fail-to-add/replace-out的clockevent  
+//        clockevent_devices保存所有有效的clockevent 
 void clockevents_notify(unsigned long reason, void *arg)
 {
 	struct clock_event_device *dev, *tmp;
@@ -269,6 +280,7 @@ void clockevents_notify(unsigned long reason, void *arg)
 	int cpu;
 
 	raw_spin_lock_irqsave(&clockevents_lock, flags);
+	//封装标准通知链操作raw_notifier_call_chain  
 	clockevents_do_notify(reason, arg);
 
 	switch (reason) {
@@ -277,11 +289,14 @@ void clockevents_notify(unsigned long reason, void *arg)
 		 * Unregister the clock event devices which were
 		 * released from the users in the notify chain.
 		 */
+		//clockevents_released用于保存所有fail-to-add/replace-out的clockevent  
+        //当cpu offline后，清空此链表  
 		list_for_each_entry_safe(dev, tmp, &clockevents_released, list)
 			list_del(&dev->list);
 		/*
 		 * Now check whether the CPU has left unused per cpu devices
 		 */
+		  //删除与此cpu相关的clockevent
 		cpu = *((int *)arg);
 		list_for_each_entry_safe(dev, tmp, &clockevent_devices, list) {
 			if (cpumask_test_cpu(cpu, dev->cpumask) &&

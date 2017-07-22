@@ -115,18 +115,33 @@ void tick_resume_oneshot(void)
 /**
  * tick_setup_oneshot - setup the event device for oneshot mode (hres or nohz)
  */
+//  单触发模式启动设备  
+//  调用路径：tick_check_new_device->tick_setup_device->tick_setup_oneshot  
+//  函数任务：  
+//      1.设置事件处理函数  
+//      2.设置设备当前为单触发模式  
+//      3.更新设备事件的到期时间  
 void tick_setup_oneshot(struct clock_event_device *newdev,
 			void (*handler)(struct clock_event_device *),
 			ktime_t next_event)
 {
+	//设置事件处理函数
+
 	newdev->event_handler = handler;
 	clockevents_set_mode(newdev, CLOCK_EVT_MODE_ONESHOT);
+	//更新设备事件到期时间
 	tick_dev_program_event(newdev, next_event, 1);
 }
 
 /**
  * tick_switch_to_oneshot - switch to oneshot mode
  */
+//  更新clockevnet为单触发模式，安装事件处理程序  
+//  调用路径：hrtimer_switch_to_hres->...->tick_switch_to_oneshot  
+//  函数任务：  
+//      1.更新设备为单触发方式  
+//      2.安装事件处理程序  
+//      3.更新广播设备为单触发方式 
 int tick_switch_to_oneshot(void (*handler)(struct clock_event_device *))
 {
 	struct tick_device *td = &__get_cpu_var(tick_cpu_device);
@@ -148,10 +163,13 @@ int tick_switch_to_oneshot(void (*handler)(struct clock_event_device *))
 		}
 		return -EINVAL;
 	}
-
+	//更新设备为单触发方式 
 	td->mode = TICKDEV_MODE_ONESHOT;
+	//安装事件处理程序
 	dev->event_handler = handler;
+	//编程clockevent设备为单触发方式
 	clockevents_set_mode(dev, CLOCK_EVT_MODE_ONESHOT);
+	//切换广播设备为单触发方式
 	tick_broadcast_switch_to_oneshot();
 	return 0;
 }
@@ -179,6 +197,8 @@ int tick_oneshot_mode_active(void)
  *
  * Called with interrupts disabled.
  */
+//  更新clockevnet为单触发模式，安装事件处理程序  
+//  调用路径：hrtimer_switch_to_hres->tick_switch_to_onesho
 int tick_init_highres(void)
 {
 	return tick_switch_to_oneshot(hrtimer_interrupt);

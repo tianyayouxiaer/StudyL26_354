@@ -306,7 +306,7 @@ void irq_exit(void)
 #ifdef CONFIG_NO_HZ
 	/* Make sure that timer wheel updates are propagated */
 	if (idle_cpu(smp_processor_id()) && !in_interrupt() && !need_resched())
-		tick_nohz_stop_sched_tick(0);
+		tick_nohz_stop_sched_tick(0);//使得系统有机会再次停止周期时钟若干个tick周期。
 #endif
 	preempt_enable_no_resched();
 }

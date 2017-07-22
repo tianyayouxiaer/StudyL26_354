@@ -670,7 +670,9 @@ void hres_timers_resume(void)
  */
 static inline void hrtimer_init_hres(struct hrtimer_cpu_base *base)
 {
+	////下一次事件到期的绝对时间，KTIME_MAX表示没有hrtimer会到期  
 	base->expires_next.tv64 = KTIME_MAX;
+	////高分辨率未激活状态 
 	base->hres_active = 0;
 }
 
@@ -709,6 +711,14 @@ static inline int hrtimer_enqueue_reprogram(struct hrtimer *timer,
 /*
  * Switch to high resolution mode
  */
+//  切换高分辨率模式  
+//  函数任务：  
+//      1.更新clockevent为单触发模式，安装高分辨率事件处理程序  
+//      2.初始化动态时钟  
+//          2.1 更新高分辨率激活标志  
+//          2.2 更新时钟基础为高分辨率标志  
+//      3.初始化动态时钟  
+//      4.更新tick device到期时间为时钟基础中所有hrtimer最短的到期时间
 static int hrtimer_switch_to_hres(void)
 {
 	int cpu = smp_processor_id();
@@ -719,20 +729,32 @@ static int hrtimer_switch_to_hres(void)
 		return 1;
 
 	local_irq_save(flags);
-
+	
+	//更新clockevent为单触发模式，安装高分辨率事件处理程序
 	if (tick_init_highres()) {
 		local_irq_restore(flags);
 		printk(KERN_WARNING "Could not switch to high resolution "
 				    "mode on CPU %d\n", cpu);
 		return 0;
 	}
+	//高分辨率激活标志
 	base->hres_active = 1;
 	base->clock_base[CLOCK_REALTIME].resolution = KTIME_HIGH_RES;
 	base->clock_base[CLOCK_MONOTONIC].resolution = KTIME_HIGH_RES;
 
+	//初始化动态时钟 
 	tick_setup_sched_timer();
 
 	/* "Retrigger" the interrupt to get things going */
+	//更新tick device到期时间为时钟基础中所有hrtimer最短的到期时间
+	/*
+	最后，因为tick_device被高精度定时器接管，它将不会再提供原有的tick事件机制，
+	所以需要由高精度定时器系统模拟一个tick事件设备，继续为系统提供tick事件能力，
+	这个工作由tick_setup_sched_timer函数完成。因为刚刚完成切换，tick_device的到
+	期时间并没有被正确地设置为下一个到期定时器的时间，这里使用retrigger_next_event函数，
+	传入参数NULL，使得tick_device立刻产生到期中断，hrtimer_interrupt被调用一次，
+	然后下一个到期的定时器的时间会编程到tick_device中，从而完成了到高精度模式的切换：
+	*/
 	retrigger_next_event(NULL);
 	local_irq_restore(flags);
 	return 1;
@@ -956,6 +978,11 @@ remove_hrtimer(struct hrtimer *timer, struct hrtimer_clock_base *base)
 	return 0;
 }
 
+//  调用路径：hrtimer_start->hrtimer_start_range_ns->__hrtimer_start_range_ns  
+//  函数任务：  
+//      1.初始化hrtimer的base字段  
+//      2.初始化作为红黑树的节点的node字段 
+
 int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 		unsigned long delta_ns, const enum hrtimer_mode mode,
 		int wakeup)
@@ -964,12 +991,15 @@ int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 	unsigned long flags;
 	int ret, leftmost;
 
+	/* 取得hrtimer_clock_base指针 */ 
 	base = lock_hrtimer_base(timer, &flags);
 
 	/* Remove an active timer from the queue: */
+	/* 如果已经在红黑树中，先移除它: */ 
 	ret = remove_hrtimer(timer, base);
 
 	/* Switch the timer base, if necessary: */
+	 /* 如果是相对时间，则需要加上当前时间，因为内部是使用绝对时间 */
 	new_base = switch_hrtimer_base(timer, base, mode & HRTIMER_MODE_PINNED);
 
 	if (mode & HRTIMER_MODE_REL) {
@@ -985,11 +1015,14 @@ int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 		tim = ktime_add_safe(tim, base->resolution);
 #endif
 	}
-
+	
+	/* 设置到期的时间范围 */ 
 	hrtimer_set_expires_range_ns(timer, tim, delta_ns);
 
 	timer_stats_hrtimer_set_start_info(timer);
 
+	/* 把hrtime按到期时间排序，加入到对应时间基准系统的红黑树中 */  
+	/* 如果该定时器的是最早到期的，将会返回true */ 
 	leftmost = enqueue_hrtimer(timer, new_base);
 
 	/*
@@ -998,6 +1031,7 @@ int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 	 *
 	 * XXX send_remote_softirq() ?
 	 */
+	 //定时器比之前的到期时间要早，所以需要重新对tick_device进行编程，重新设定的的到期时间
 	if (leftmost && new_base->cpu_base == &__get_cpu_var(hrtimer_bases))
 		hrtimer_enqueue_reprogram(timer, new_base, wakeup);
 
@@ -1148,6 +1182,11 @@ ktime_t hrtimer_get_next_event(void)
 }
 #endif
 
+
+//  调用路径：hrtimer_init->__hrtimer_init  
+//  函数任务：  
+//      1.初始化hrtimer的base字段  
+//      2.初始化作为红黑树的节点的node字段 
 static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
 			   enum hrtimer_mode mode)
 {
@@ -1176,6 +1215,14 @@ static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
  * @clock_id:	the clock to be used
  * @mode:	timer mode abs/rel
  */
+
+ /*
+ 要添加一个hrtimer，系统提供了一些api供我们使用，首先我们需要定义一个hrtimer结构的实例，
+ 然后用hrtimer_init函数对它进行初始化
+
+ which_clock可以是CLOCK_REALTIME、CLOCK_MONOTONIC、CLOCK_BOOTTIME中的一种，
+ mode则可以是相对时间HRTIMER_MODE_REL，也可以是绝对时间HRTIMER_MODE_ABS。
+ */
 void hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
 		  enum hrtimer_mode mode)
 {
@@ -1202,6 +1249,14 @@ int hrtimer_get_res(const clockid_t which_clock, struct timespec *tp)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(hrtimer_get_res);
+//  运行hrtimer  
+//  调用路径：hrtimer_interrupt->__run_hrtimer  
+//  函数任务：  
+//      1.从红黑树中删除hrtimer  
+//      2.设置其为执行状态  
+//      3.执行hrtimer回调函数  
+//          3.1 如果hrtimer需要继续执行，重新建hrtimer加入到红黑树中  
+//      4.清除其正在执行标志 
 
 static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
 {
@@ -1213,6 +1268,7 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
 	WARN_ON(!irqs_disabled());
 
 	debug_deactivate(timer);
+	//从红黑树中删除hrtimer，设置其为执行状态
 	__remove_hrtimer(timer, base, HRTIMER_STATE_CALLBACK, 0);
 	timer_stats_account_hrtimer(timer);
 	fn = timer->function;
@@ -1224,6 +1280,7 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
 	 */
 	raw_spin_unlock(&cpu_base->lock);
 	trace_hrtimer_expire_entry(timer, now);
+	 //执行hrtimer回调函数 
 	restart = fn(timer);
 	trace_hrtimer_expire_exit(timer);
 	raw_spin_lock(&cpu_base->lock);
@@ -1233,10 +1290,12 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
 	 * we do not reprogramm the event hardware. Happens either in
 	 * hrtimer_start_range_ns() or in hrtimer_interrupt()
 	 */
+	 //将hrtimer重新入队
 	if (restart != HRTIMER_NORESTART) {
 		BUG_ON(timer->state != HRTIMER_STATE_CALLBACK);
 		enqueue_hrtimer(timer, base);
 	}
+	//清除其正在执行标志
 	timer->state &= ~HRTIMER_STATE_CALLBACK;
 }
 
@@ -1246,6 +1305,23 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
  * High resolution timer interrupt
  * Called with interrupts disabled
  */
+//  高分辨率tick device事件处理函数  
+//      遍历执行本cpu上的hrtimer  
+//  调用路径：  
+//      1.run_hrtimer_softirq->....->hrtimer_interrupt 软中断路径。  
+//      2.当激活高分辨率模式时，安装此函数作为tick device的事件处理函数。  
+//  函数任务：  
+//      1.遍历时钟基础  
+//          1.1 运行到期的hrtimer  
+//      2.如果处理完所有hrtimer，关闭时钟事件设备，退出  
+//      3.重复步骤1，最多遍历3次  
+//      4.更新统计信息  
+//          4.1 cpu_base->nr_hangs统计一次hrtimer未能处理完所有hrtimer的次数  
+//          4.2 cpu_base->hang_detected指示有hrtimer待处理  
+//          4.3 cpu_base->max_hang_time记录hrtimer_interrupt花费的最大时间，即hrtimer可能被延迟的最大时间  
+//      5.根据花费的时间计算时钟事件设备下一次到期的时间  
+//          5.1 如果处理hrtimer花费时间超过1ms，推迟下一次到期时间为1ms后  
+//          5.2 否则下一次到期时间为花费的时间  
 void hrtimer_interrupt(struct clock_event_device *dev)
 {
 	struct hrtimer_cpu_base *cpu_base = &__get_cpu_var(hrtimer_bases);
@@ -1260,7 +1336,7 @@ void hrtimer_interrupt(struct clock_event_device *dev)
 	entry_time = now = ktime_get();
 retry:
 	expires_next.tv64 = KTIME_MAX;
-
+	//防止此段时间内其他cpu的hrtimer迁移到本cpu时
 	raw_spin_lock(&cpu_base->lock);
 	/*
 	 * We set expires_next to KTIME_MAX here with cpu_base->lock
@@ -1272,11 +1348,11 @@ retry:
 	cpu_base->expires_next.tv64 = KTIME_MAX;
 
 	base = cpu_base->clock_base;
-
+	//遍历所有时钟基础的hrtime
 	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++) {
 		ktime_t basenow;
 		struct rb_node *node;
-
+		//时钟基础的时间与实际时间可能有偏移，hrtimer的到期时间为实际时间的绝对值
 		basenow = ktime_add(now, base->offset);
 
 		while ((node = base->first)) {
@@ -1296,17 +1372,17 @@ retry:
 			 * are right-of a not yet expired timer, because that
 			 * timer will have to trigger a wakeup anyway.
 			 */
-
+			//如果当前hrtimer还没有到期
 			if (basenow.tv64 < hrtimer_get_softexpires_tv64(timer)) {
 				ktime_t expires;
-
+				//更新时钟事件下一次到期时间 
 				expires = ktime_sub(hrtimer_get_expires(timer),
 						    base->offset);
 				if (expires.tv64 < expires_next.tv64)
 					expires_next = expires;
 				break;
 			}
-
+			//否则立即执行定时器
 			__run_hrtimer(timer, &basenow);
 		}
 		base++;
@@ -1316,10 +1392,12 @@ retry:
 	 * Store the new expiry value so the migration code can verify
 	 * against it.
 	 */
+	 //更新时钟基础下一次到期时间
 	cpu_base->expires_next = expires_next;
 	raw_spin_unlock(&cpu_base->lock);
 
 	/* Reprogramming necessary ? */
+	//没有要到期的hrtimer，关闭时间事件设备
 	if (expires_next.tv64 == KTIME_MAX ||
 	    !tick_program_event(expires_next, 0)) {
 		cpu_base->hang_detected = 0;
@@ -1336,18 +1414,34 @@ retry:
 	 * interrupt routine. We give it 3 attempts to avoid
 	 * overreacting on some spurious event.
 	 */
+	 //防止一直处理hrtimer，最大遍历次数3
+	 /*
+	 如果这时的tick_program_event返回了非0值，表示过期时间已经在当前时间的前面，这通常由以下原因造成：
+	 系统正在被调试跟踪，导致时间在走，程序不走；
+	 定时器的回调函数花了太长的时间；
+	 系统运行在虚拟机中，而虚拟机被调度导致停止运行；
+	 为了避免这些情况的发生，接下来系统提供3次机会，重新执行前面的循环，处理到期的定时器：
+	 */
 	now = ktime_get();
 	cpu_base->nr_retries++;
 	if (++retries < 3)
 		goto retry;
+
+	/*
+	如果3次循环后还无法完成到期处理，系统不再循环，转为计算本次总循环的时间，
+	然后把tick_device的到期时间强制设置为当前时间加上本次的总循环时间，不过推后的时间被限制在100ms以内：
+
+	*/
 	/*
 	 * Give the system a chance to do something else than looping
 	 * here. We stored the entry time, so we know exactly how long
 	 * we spent here. We schedule the next event this amount of
 	 * time away.
 	 */
+	 //有挂起的hrtimer需要处理
 	cpu_base->nr_hangs++;
 	cpu_base->hang_detected = 1;
+	//计算hrtimer_interrupt处理hrtimer花费的时间
 	delta = ktime_sub(now, entry_time);
 	if (delta.tv64 > cpu_base->max_hang_time.tv64)
 		cpu_base->max_hang_time = delta;
@@ -1355,6 +1449,9 @@ retry:
 	 * Limit it to a sensible value as we enforce a longer
 	 * delay. Give the CPU at least 100ms to catch up.
 	 */
+	 //根据花费的时间计算时钟事件设备下一次到期的时间  
+    //  如果处理hrtimer花费时间超过1ms，推迟下一次到期时间为1ms后  
+    //  否则下一次到期时间为花费的时间 
 	if (delta.tv64 > 100 * NSEC_PER_MSEC)
 		expires_next = ktime_add_ns(now, 100 * NSEC_PER_MSEC);
 	else
@@ -1389,6 +1486,11 @@ static void __hrtimer_peek_ahead_timers(void)
  * they are run immediately and then removed from the timer queue.
  *
  */
+//  遍历运行hrtimer  
+//  函数任务：  
+//      1.关中断  
+//      2.运行hrtimer  
+//  调用路径：run_hrtimer_softirq->hrtimer_peek_ahead_timers  
 void hrtimer_peek_ahead_timers(void)
 {
 	unsigned long flags;
@@ -1398,8 +1500,15 @@ void hrtimer_peek_ahead_timers(void)
 	local_irq_restore(flags);
 }
 
+//  高分辨率下的定时器软中断  
+//      当增加一个hrtimer到rbtree中后，会raise高分辨率定时器软中断  
+//  函数任务：  
+//      1.关中断下，运行所有hrtimer  
+//  注：  
+//      在hrtimers_init中，open_softirq(HRTIMER_SOFTIRQ, run_hrtimer_softirq);  
 static void run_hrtimer_softirq(struct softirq_action *h)
 {
+	//遍历运行所有到期的hrtimer
 	hrtimer_peek_ahead_timers();
 }
 
@@ -1416,8 +1525,33 @@ static inline void __hrtimer_peek_ahead_timers(void) { }
  * softirq context in case the hrtimer initialization failed or has
  * not been done yet.
  */
+//  切换低分辨率动态时钟模式、或高分辨率模式  
+//  调用路径：run_timer_softirq->hrtimer_run_pending  
+//  函数任务：  
+//      1.如果高分辨率定时器框架已经激活，则直接返回  
+//      2.切换到高分辨率模式的条件：  
+//          2.1 没有开启低分辨率动态时钟  
+//          2.2 有高分辨率的clocksource  
+//          2.3 clockevent设备支持单触发模式  
+//      3.切换到低分辨率动态时钟的条件：  
+//          3.1 启动时，没有激活高分辨率率定时框架  
+//          3.2 clockevent设备支持单触发模式  
+/*
+尽管内核配置成支持高精度定时器，但并不是一开始就工作于高精度模式，系统在启动的开始阶段，
+还是按照传统的模式在运行：tick_device按HZ频率定期地产生tick事件，这时的hrtimer工作在低
+分辨率模式，到期事件在每个tick事件中断中由hrtimer_run_queues函数处理，同时，在低分辨率
+定时器（时间轮）的软件中断TIMER_SOFTIRQ中，hrtimer_run_pending会被调用，系统在这个函数
+中判断系统的条件是否满足切换到高精度模式，如果条件满足，则会切换至高分辨率模式，另外提
+一下，NO_HZ模式也是在该函数中判断并切换。
+*/
 void hrtimer_run_pending(void)
 {
+	/*
+	因为不管系统是否工作于高精度模式，每个TIMER_SOFTIRQ期间，该函数都会被调用，所以函数一开
+	始先用hrtimer_hres_active判断目前高精度模式是否已经激活，如果已经激活，则说明之前的调用
+	中已经切换了工作模式，不必再次切换，
+
+	*/
 	if (hrtimer_hres_active())
 		return;
 
@@ -1429,13 +1563,39 @@ void hrtimer_run_pending(void)
 	 * check bit in the tick_oneshot code, otherwise we might
 	 * deadlock vs. xtime_lock.
 	 */
+	 /*
+	 tick_check_oneshot_change函数的参数决定了现在是要切换至低分辨率动态时钟模式，
+	 还是高精度定时器模式，我们现在假设系统不支持高精度定时器模式，hrtimer_is_hres_enabled会直接返回false，
+	 对应的tick_check_oneshot_change函数的参数则是true，表明需要切换至动态时钟模式
+	 */
 	if (tick_check_oneshot_change(!hrtimer_is_hres_enabled()))
+	////切换到高分辨率模式
 		hrtimer_switch_to_hres();
 }
 
 /*
  * Called from hardirq context every jiffy
  */
+//  运行高分辨率定时器  
+//  调用路径：  
+//      update_process_times->run_local_timers->hrtimer_run_queues  
+//      当没有开启高分辨率模式时，高分辨率定时器由低分辨率时钟软中断调用，此函数在低分辨率中衔接高分辨率  
+//  函数任务：  
+//      1.检查高分辨率率定时器框架是否已经被激活  
+//          1.1 当高分辨率定时器框架被激活时，hrtimer已经通过hrtimer_interrupt被运行  
+//      2.获取当前时间  
+//      3.遍历时钟基础，如果hrtimer到期，运行其回调函数  
+//  注：  
+//      当高分辨率率定时器框架为激活时，高分辨率定时器通过时钟中断运行，频率为jiffiy。 
+
+/*
+低精度模式  因为系统并不是一开始就会支持高精度模式，而是在系统启动后的某个阶段，等待所有的条件都满足后，
+才会切换到高精度模式，当系统还没有切换到高精度模式时，所有的高精度定时器运行在低精度模式下，在每个
+jiffie的tick事件中断中进行到期定时器的查询和处理，显然这时候的精度和低分辨率定时器是一样的（HZ级别）。
+低精度模式下，每个tick事件中断中，hrtimer_run_queues函数会被调用，由它完成定时器的到期处理。
+hrtimer_run_queues首先判断目前高精度模式是否已经启用，如果已经切换到了高精度模式，什么也不做，直接返回：
+
+*/
 void hrtimer_run_queues(void)
 {
 	struct rb_node *node;
@@ -1443,26 +1603,39 @@ void hrtimer_run_queues(void)
 	struct hrtimer_clock_base *base;
 	int index, gettime = 1;
 
+	//如果高分辨率定时器框架已经激活，则hrtimer已经通过hrtimer_interrupt被运行，直接返回
 	if (hrtimer_hres_active())
 		return;
 
+	/*
+	如果hrtimer_hres_active返回false，说明目前处于低精度模式下，则继续处理，
+	它用一个for循环遍历各个时间基准系统，查询每个hrtimer_clock_base对应红黑树
+	的左下节点，判断它的时间是否到期，如果到期，通过__run_hrtimer函数，对到期
+	定时器进行处理，包括：调用定时器的回调函数、从红黑树中移除该定时器、根据回
+	调函数的返回值决定是否重新启动该定时器等等：
+	*/
+	
+	//遍历cpu的时钟基础，运行到期的hrtimer 
 	for (index = 0; index < HRTIMER_MAX_CLOCK_BASES; index++) {
 		base = &cpu_base->clock_base[index];
+		//当前时钟基础已经没有active的hrtimer，则遍历下一个
 
 		if (!base->first)
 			continue;
-
+		//获取当前时间
 		if (gettime) {
 			hrtimer_get_softirq_time(cpu_base);
 			gettime = 0;
 		}
 
 		raw_spin_lock(&cpu_base->lock);
+		//获取下一个active的hrtimer
 
 		while ((node = base->first)) {
 			struct hrtimer *timer;
 
 			timer = rb_entry(node, struct hrtimer, node);
+			 //如果hrtimer到期，则运行其回调函数
 			if (base->softirq_time.tv64 <=
 					hrtimer_get_expires_tv64(timer))
 				break;
@@ -1498,8 +1671,20 @@ EXPORT_SYMBOL_GPL(hrtimer_init_sleeper);
 
 static int __sched do_nanosleep(struct hrtimer_sleeper *t, enum hrtimer_mode mode)
 {
+	/*
+	它首先通过hrtimer_init_sleeper函数，把定时器的回调函数设置为hrtimer_wakeup，
+	把当前进程的task_struct结构指针保存在hrtimer_sleeper结构的task字段中
+	*/
 	hrtimer_init_sleeper(t, current);
 
+	/*
+	通过一个do/while循环内：启动定时器，挂起当前进程，等待定时器或其它事件唤醒进程。
+	这里的循环体实现比较怪异，它使用hrtimer_active函数间接地判断定时器是否到期，
+	如果hrtimer_active返回false，说明定时器已经过期，然后把hrtimer_sleeper结构的task
+	字段设置为NULL，从而导致循环体的结束，另一个结束条件是当前进程收到了信号事件，
+	所以，当因为是定时器到期而退出时，do_nanosleep返回true，否则返回false，
+	上述的hrtimer_nanosleep正是利用了这一特性来决定它的返回值。
+	*/
 	do {
 		set_current_state(TASK_INTERRUPTIBLE);
 		hrtimer_start_expires(&t->timer, mode);
@@ -1574,8 +1759,15 @@ long hrtimer_nanosleep(struct timespec *rqtp, struct timespec __user *rmtp,
 	if (rt_task(current))
 		slack = 0;
 
+	//hrtimer_nanosleep函数首先在堆栈中创建一个高精度定时器，设置它的到期时间
 	hrtimer_init_on_stack(&t.timer, clockid, mode);
 	hrtimer_set_expires_range_ns(&t.timer, timespec_to_ktime(*rqtp), slack);
+	/* do_nanosleep完成最终的延时工作, 当前进程在挂起相应的延时时间后，退出do_nanosleep函数，
+	销毁堆栈中的定时器并返回0值表示执行成功。不过do_nanosleep可能在没有达到所需延时数量时由
+	于其它原因退出，如果出现这种情况，hrtimer_nanosleep的最后部分把剩余的延时时间记入进程的
+	restart_block中，并返回ERESTART_RESTARTBLOCK错误代码，系统或者用户空间可以根据此返回值决定
+	是否重新调用nanosleep以便把剩余的延时继续执行完成。
+	*/
 	if (do_nanosleep(&t, mode))
 		goto out;
 
@@ -1620,13 +1812,21 @@ SYSCALL_DEFINE2(nanosleep, struct timespec __user *, rqtp,
 /*
  * Functions related to boot-time initialization:
  */
+ //  初始化cpu的时钟基础  
+//  函数任务：  
+//      1.初始化REALTIME、MONOTOMIC两个时钟基础  
+//      2.更新时钟基础到期时间为KTIME_MAX，即没有hrtimer会到期  
+//      3.更新高分辨率定时器未激活状态  
+//  调用路径：init_hrtimers_cpu->init_hrtimers_cpu 
 static void __cpuinit init_hrtimers_cpu(int cpu)
 {
+	////per cpu时钟基础设备，用于维护该cpu的hrtimer 
 	struct hrtimer_cpu_base *cpu_base = &per_cpu(hrtimer_bases, cpu);
 	int i;
 
 	raw_spin_lock_init(&cpu_base->lock);
 
+	//初始化cpu时钟基础
 	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++)
 		cpu_base->clock_base[i].cpu_base = cpu_base;
 
@@ -1701,6 +1901,15 @@ static void migrate_hrtimers(int scpu)
 
 #endif /* CONFIG_HOTPLUG_CPU */
 
+//  处理cpu状态变化  
+//  函数任务：  
+//      1.cpu up，初始化cpu的时钟基础  
+//      2.针对热插拔cpu  
+//          2.1 cpu dying、frozen，选择cpu，接管do_timer  
+//          2.2 cpu dead、frozen  
+//              2.2.1 通知clockevent设备管理，cpu dead  
+//              2.2.2 迁移dead cpu上的hrtimer到本cpu  
+
 static int __cpuinit hrtimer_cpu_notify(struct notifier_block *self,
 					unsigned long action, void *hcpu)
 {
@@ -1708,20 +1917,24 @@ static int __cpuinit hrtimer_cpu_notify(struct notifier_block *self,
 
 	switch (action) {
 
+	//cpu up，初始化此cpu的时钟基础 
 	case CPU_UP_PREPARE:
 	case CPU_UP_PREPARE_FROZEN:
 		init_hrtimers_cpu(scpu);
 		break;
-
+ 	//下列情况只针对热插拔cpu  
 #ifdef CONFIG_HOTPLUG_CPU
 	case CPU_DYING:
 	case CPU_DYING_FROZEN:
+	//选择cpu接管do_timer
 		clockevents_notify(CLOCK_EVT_NOTIFY_CPU_DYING, &scpu);
 		break;
 	case CPU_DEAD:
 	case CPU_DEAD_FROZEN:
 	{
+		//通知clockevent设备管理，cpu dead
 		clockevents_notify(CLOCK_EVT_NOTIFY_CPU_DEAD, &scpu);
+		//迁移cpu上的定时任务到本cpu 
 		migrate_hrtimers(scpu);
 		break;
 	}
@@ -1734,16 +1947,31 @@ static int __cpuinit hrtimer_cpu_notify(struct notifier_block *self,
 	return NOTIFY_OK;
 }
 
+//  cpu状态监听控制块 
 static struct notifier_block __cpuinitdata hrtimers_nb = {
 	.notifier_call = hrtimer_cpu_notify,
 };
 
+//  高分辨率定时器框架初始化  
+//  调用路径：start_kernel->hrtimers_init  
+//  函数任务：  
+//      1.创建cpu时钟基础  
+//      2.注册监听cpu状态变化  
+//      3.注册高分辨率模式下的定时器软中断  
+//  注：  
+//      1.高分辨率定时器框架的通用部分总是编译进内核  
+//      2.高分辨率定时器框架初始为未激活状态，由低分辨率定时器软中断中切换到高分辨率 
+
 void __init hrtimers_init(void)
 {
+	//通知clockevent设备管理，创建cpu时钟基础 
 	hrtimer_cpu_notify(&hrtimers_nb, (unsigned long)CPU_UP_PREPARE,
 			  (void *)(long)smp_processor_id());
+	//注册监听cpu 状态信息  
 	register_cpu_notifier(&hrtimers_nb);
+	 //高分辨率定时功能通过预处理编译进内核  
 #ifdef CONFIG_HIGH_RES_TIMERS
+	////注册高分辨率模式下的定时器软中断
 	open_softirq(HRTIMER_SOFTIRQ, run_hrtimer_softirq);
 #endif
 }
@@ -1755,6 +1983,7 @@ void __init hrtimers_init(void)
  * @mode:	timer mode, HRTIMER_MODE_ABS or HRTIMER_MODE_REL
  * @clock:	timer clock, CLOCK_MONOTONIC or CLOCK_REALTIME
  */
+ //使得当前进程休眠指定的时间范围，可以自行指定计时系统；
 int __sched
 schedule_hrtimeout_range_clock(ktime_t *expires, unsigned long delta,
 			       const enum hrtimer_mode mode, int clock)
@@ -1827,6 +2056,7 @@ schedule_hrtimeout_range_clock(ktime_t *expires, unsigned long delta,
  *
  * Returns 0 when the timer has expired otherwise -EINTR
  */
+ //使得当前进程休眠指定的时间范围，使用CLOCK_MONOTONIC计时系统
 int __sched schedule_hrtimeout_range(ktime_t *expires, unsigned long delta,
 				     const enum hrtimer_mode mode)
 {
@@ -1857,6 +2087,7 @@ EXPORT_SYMBOL_GPL(schedule_hrtimeout_range);
  *
  * Returns 0 when the timer has expired otherwise -EINTR
  */
+ //使得当前进程休眠指定的时间，使用CLOCK_MONOTONIC计时系统
 int __sched schedule_hrtimeout(ktime_t *expires,
 			       const enum hrtimer_mode mode)
 {

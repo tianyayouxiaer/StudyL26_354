@@ -66,6 +66,8 @@ EXPORT_SYMBOL(jiffies_64);
 #define TVN_MASK (TVN_SIZE - 1)
 #define TVR_MASK (TVR_SIZE - 1)
 
+//  低分辨率定时器框架数据结构  
+//  注：默认情况下，TVN_SIZE=64，TVR_SIZE=256
 struct tvec {
 	struct list_head vec[TVN_SIZE];
 };
@@ -79,6 +81,7 @@ struct tvec_root {
 */
 struct tvec_base {
 	spinlock_t lock;
+	////当前正在运行的timer_list
 	struct timer_list *running_timer;//当前cpu正在处理的定时器所对应的timer_list结构
 	unsigned long timer_jiffies;//该字段表示当前cpu定时器所经历过的jiffies数，大多数情况下
 	unsigned long next_timer;//该字段指向该cpu下一个即将到期的定时器
@@ -393,11 +396,20 @@ tv2往tv1迁移的过程。同样地，当base.timer_jiffies的第8-13位为0时
 从而完成tv3到tv2的迁移，tv4，tv5的处理可以以此作类推。
 
 */
+
+//  根据当前jiffies移动timer_list  
+//  函数任务：  
+//      1.计算timer_list的到期时间相对目前已经到期timer_list的偏移量  
+//      2.根据偏移量确定对应的tv，以及tv内的链表  
+//      3.将timer_list加入到相应tv的链表中 
+
 static void internal_add_timer(struct tvec_base *base, struct timer_list *timer)
 {
 	unsigned long expires = timer->expires;
+	//timer_list的到期时间相对目前已经到期timer_list的偏移量
 	unsigned long idx = expires - base->timer_jiffies;
 	struct list_head *vec;
+	//确定idx对应的tv 
 
 	if (idx < TVR_SIZE) {
 		int i = expires & TVR_MASK;
@@ -432,6 +444,7 @@ static void internal_add_timer(struct tvec_base *base, struct timer_list *timer)
 	/*
 	 * Timers are FIFO:
 	 */
+	 //将timer_list加入到相应tv的链表中
 	list_add_tail(&timer->entry, vec);
 }
 
@@ -1055,6 +1068,10 @@ EXPORT_SYMBOL(del_timer_sync);
 事实上，它的实现是一个很好的空间换时间软件算法。
 
 */
+//  向上一级tv补充timer_list  
+//  函数任务：  
+//      1.取当前jiffies对应tv中的timer_list  
+//      2.将timer_list从链表删除，根据当前jiffies计算timer_list应该移动到的tv 
 
 static int cascade(struct tvec_base *base, struct tvec *tv, int index)
 {
@@ -1062,12 +1079,14 @@ static int cascade(struct tvec_base *base, struct tvec *tv, int index)
 	struct timer_list *timer, *tmp;
 	struct list_head tv_list;
 
+	//取当前jiffies对应tv中的timer_list链表
 	list_replace_init(tv->vec + index, &tv_list);// 移除需要迁移的链表
 
 	/*
 	 * We are removing _all_ timers from the list, so we
 	 * don't have to detach them individually.
 	 */
+	 //将timer_list从链表中删除，计算新位置
 	list_for_each_entry_safe(timer, tmp, &tv_list, entry) {
 		BUG_ON(tbase_get_base(timer->base) != base);
 		//重新加入到定时器系统中，实际上将会迁移到下一级的tv数组中
@@ -1118,6 +1137,7 @@ static void call_timer_fn(struct timer_list *timer, void (*fn)(unsigned long),
 	}
 }
 
+//  计算tv对应的bit区间
 #define INDEX(N) ((base->timer_jiffies >> (TVR_BITS + (N) * TVN_BITS)) & TVN_MASK)
 
 /**
@@ -1134,6 +1154,15 @@ static void call_timer_fn(struct timer_list *timer, void (*fn)(unsigned long),
  由此可见，低分辨率定时器的回调函数是执行在软件中断上下文中的，
  这点在写定时器的回调函数时需要注意。
  */
+
+//  运行本cpu到期的timer_list  
+//  函数任务：  
+//      1.如果tvec_root 遍历了一遍  
+//          1.1 从tv中移动timer_list向前补充  
+//      2.更新timer_jiffies  
+//      3.设置base->running_timer，表示当前cpu上正在运行的timer_list  
+//      4.开中断下运行到期的timer_list的函数  
+//      5.清空base->running_timer
 static inline void __run_timers(struct tvec_base *base)
 {
 	struct timer_list *timer;
@@ -1151,6 +1180,7 @@ static inline void __run_timers(struct tvec_base *base)
 		 * Cascade timers:
 		 */
 		 /* tv2--tv5定时器列表迁移处理     */ 
+		 //tvec_root已经遍历了一遍，tv向前补充timer_list
 		if (!index &&
 			(!cascade(base, &base->tv2, INDEX(0))) &&
 				(!cascade(base, &base->tv3, INDEX(1))) &&
@@ -1174,14 +1204,16 @@ static inline void __run_timers(struct tvec_base *base)
 
 			/* 标记正在处理的定时器  */
 			set_running_timer(base, timer);
+			//将timer_list从链表上取下
 			detach_timer(timer, 1);
-
+			//开中断运行timer_list 
 			spin_unlock_irq(&base->lock);
 			/*  调用定时器的回调函数  */
 			call_timer_fn(timer, fn, data);
 			spin_lock_irq(&base->lock);
 		}
 	}
+	//设置base->running_timer=null
 	set_running_timer(base, NULL);
 	spin_unlock_irq(&base->lock);
 }
@@ -1352,12 +1384,23 @@ void update_process_times(int user_tick)
 /*
  * This function runs timers and the timer-tq in bottom half context.
  */
+ /*
+ 系统工作于周期时钟模式，定期地发出tick事件中断，tick事件中断触发定时器软中断：TIMER_SOFTIRQ，
+ 执行软中断处理函数run_timer_softirq，run_timer_softirq调用hrtimer_run_pending函数：
+ */
+//  低分辨率定时器软中断  
+//  函数任务：  
+//      1.尝试切换低分辨率动态时钟模式、或高分辨率模式  
+//      2.运行到期的timer_list  
+//  注：  
+//      1.timer_list的分辨率为jiffies 
 static void run_timer_softirq(struct softirq_action *h)
 {
 	struct tvec_base *base = __get_cpu_var(tvec_bases);
-
+	//尝试切换低分辨率动态时钟模式、或高分辨率模式
 	hrtimer_run_pending();
-
+	
+	//执行到期的timer_list
 	if (time_after_eq(jiffies, base->timer_jiffies))
 		__run_timers(base);
 }
@@ -1365,9 +1408,16 @@ static void run_timer_softirq(struct softirq_action *h)
 /*
  * Called by the local, per-CPU timer interrupt on SMP.
  */
+//  触发低分辨率定时器软中断  
+//  调用路径：update_process_times->run_local_timers  
+//  注：  
+//      1.update_process_times以HZ频率被调用，因此低分辨率定时器的分辨率为HZ  
+//      2.当未激活高分辨率定时器框架时，高分辨率定时器在时钟中断被运行，因此高分辨率定时器的分辨率也HZ
 void run_local_timers(void)
 {
+	//如果高分辨率定时器框架未激活，则在周期时钟中断中运行高分辨率率定时器
 	hrtimer_run_queues();
+	//触发低分辨率定时器软中断
 	raise_softirq(TIMER_SOFTIRQ);
 	softlockup_tick();
 }
@@ -1380,6 +1430,13 @@ void run_local_timers(void)
  // 通常每个tick的定时中断周期，do_timer会被调用一次
  // jiffies_64变量被相应地累加，然后在update_wall_time中完成xtime等时间的更新操作，
  // 更新时间的核心操作就是读取关联clocksource的计数值，累加到xtime等字段中
+
+//  更新全局时间  
+//  函数任务：  
+//      1.更新jiffies  
+//      2.更新墙上时间  
+//      3.cpu间负载均衡  
+//  调用路径：tick_periodic->do_timer 
 void do_timer(unsigned long ticks)
 {
 	jiffies_64 += ticks;
@@ -1466,6 +1523,7 @@ SYSCALL_DEFINE0(getegid)
 
 static void process_timeout(unsigned long __data)
 {
+	//定时器一旦到期，进程会被唤醒并继续执行
 	wake_up_process((struct task_struct *)__data);
 }
 
@@ -1502,6 +1560,7 @@ signed long __sched schedule_timeout(signed long timeout)
 
 	switch (timeout)
 	{
+	//表明需要一直延时，直接执行调度即可
 	case MAX_SCHEDULE_TIMEOUT:
 		/*
 		 * These two special cases are useful to be comfortable
@@ -1529,11 +1588,20 @@ signed long __sched schedule_timeout(signed long timeout)
 		}
 	}
 
+	//然后计算到期的jiffies数，并在堆栈上建立一个低分辨率定时器，把到期时间设置到该定时器中，
+	//启动定时器后，通过schedule把当前进程调度出cpu的运行队列：
 	expire = timeout + jiffies;
 
 	setup_timer_on_stack(&timer, process_timeout, (unsigned long)current);
 	__mod_timer(&timer, expire, false, TIMER_NOT_PINNED);
 	schedule();
+	
+	/*
+	到这个时候，进程已经被调度走，那它如何返回继续执行？我们看到定时器的到期回调函数是process_timeout，
+	参数是当前进程的task_struct指针
+	*/
+	// schedule返回后，说明要不就是定时器到期，要不就是因为其它时间导致进程被唤醒，
+	// 函数要做的就是删除在堆栈上建立的定时器，返回剩余未完成的jiffies数。
 	del_singleshot_timer_sync(&timer);
 
 	/* Remove the timer from the object tracker */
@@ -1656,6 +1724,13 @@ SYSCALL_DEFINE1(sysinfo, struct sysinfo __user *, info)
 	return 0;
 }
 
+//  创建cpu的定时器框架数据结构  
+//  调用路径：timer_cpu_notify->init_timers_cpu  
+//  函数任务：  
+//      1.分配低分辨率定时器框架数据结构  
+//      2.初始化tvec_base的链表头  
+//      3.设置定时器的到期时间戳为当前时间 
+
 static int __cpuinit init_timers_cpu(int cpu)
 {
 	int j;
@@ -1669,6 +1744,7 @@ static int __cpuinit init_timers_cpu(int cpu)
 			/*
 			 * The APs use this path later in boot
 			 */
+			 //分配低分辨率定时器框架
 			base = kmalloc_node(sizeof(*base),
 						GFP_KERNEL | __GFP_ZERO,
 						cpu_to_node(cpu));
@@ -1699,6 +1775,7 @@ static int __cpuinit init_timers_cpu(int cpu)
 
 	spin_lock_init(&base->lock);
 
+	//分配低分辨率定时器框架
 	for (j = 0; j < TVN_SIZE; j++) {
 		INIT_LIST_HEAD(base->tv5.vec + j);
 		INIT_LIST_HEAD(base->tv4.vec + j);
@@ -1707,7 +1784,8 @@ static int __cpuinit init_timers_cpu(int cpu)
 	}
 	for (j = 0; j < TVR_SIZE; j++)
 		INIT_LIST_HEAD(base->tv1.vec + j);
-
+		
+	//timer_jiffies记录一个时间点，标识此前到期的定时器都已经执行
 	base->timer_jiffies = jiffies;
 	base->next_timer = base->timer_jiffies;
 	return 0;
@@ -1762,6 +1840,10 @@ static void __cpuinit migrate_timers(int cpu)
 }
 #endif /* CONFIG_HOTPLUG_CPU */
 
+//  低分辨率定时器框架处理cpu状态  
+//  函数任务：  
+//      1.cpu up,创建本cpu的低分辨率定时器框架  
+//      2.cpu dead,迁移其定时器到本cpu上  
 static int __cpuinit timer_cpu_notify(struct notifier_block *self,
 				unsigned long action, void *hcpu)
 {
@@ -1769,15 +1851,18 @@ static int __cpuinit timer_cpu_notify(struct notifier_block *self,
 	int err;
 
 	switch(action) {
+	//cpu up，创建本cpu的低分辨率定时器框架的数据结构
 	case CPU_UP_PREPARE:
 	case CPU_UP_PREPARE_FROZEN:
 		err = init_timers_cpu(cpu);
 		if (err < 0)
 			return notifier_from_errno(err);
 		break;
+		//热插拔cpu，才会出现cpu dead、frozen信息
 #ifdef CONFIG_HOTPLUG_CPU
 	case CPU_DEAD:
 	case CPU_DEAD_FROZEN:
+	//迁移其cpu的定时器到本cpu 
 		migrate_timers(cpu);
 		break;
 #endif
@@ -1787,21 +1872,28 @@ static int __cpuinit timer_cpu_notify(struct notifier_block *self,
 	return NOTIFY_OK;
 }
 
+//  cpu状态监听控制块
 static struct notifier_block __cpuinitdata timers_nb = {
 	.notifier_call	= timer_cpu_notify,
 };
+//  低分辨率定时器框架初始化  
+//  调用路径：start_kernel->init_timers  
+//  函数任务：  
+//      1.创建当前cpu的定时器框架数据结构  
+//      2.监听cpu状态信息  
+//      3.注册低分辨率软中断 
 
-//系统初始化时，start_kernel会调用定时器系统的初始化函数init_timers：
 void __init init_timers(void)
 {
 	int err = timer_cpu_notify(&timers_nb, (unsigned long)CPU_UP_PREPARE,
 				(void *)(long)smp_processor_id());
-
+	//创建当前cpu的定时器框架数据结构
 	init_timer_stats();
 
 	BUG_ON(err != NOTIFY_OK);
+	//监听cpu状态信息
 	register_cpu_notifier(&timers_nb);///* 注册cpu notify，以便在hotplug时在cpu之间进行定时器的迁
-	//open_softirq把run_timer_softirq注册为TIMER_SOFTIRQ的处理函数
+	//注册低分辨率软中断
 	open_softirq(TIMER_SOFTIRQ, run_timer_softirq);
 }
 
@@ -1809,8 +1901,28 @@ void __init init_timers(void)
  * msleep - sleep safely even with waitqueue interruptions
  * @msecs: Time in milliseconds to sleep for
  */
+ /*
+ 它会使当前进程被调度并让出cpu一段时间，因为这一特性，它不能用于中断上下文，
+ 只能用于进程上下文中。要想在中断上下文中使用延时函数，请使用会阻塞cpu的无调度版本mdelay。
+ 延时的时间由参数msecs指定，单位是毫秒，事实上，msleep的实现基于低分辨率定时器，
+ 所以msleep的实际精度只能也是1/HZ级别。
+
+ */
+
+ /*
+ 最主要的区别就是msleep会保证所需的延时一定会被执行完，而msleep_interruptible则可以
+ 在延时进行到一半时被信号打断而退出延时，剩余的延时数则通过返回值返回。两个函数最终
+ 的代码都会到达schedule_timeout函数，
+
+ */
 void msleep(unsigned int msecs)
 {
+	/*
+	毫秒转换为jiffies数，通过一个while循环保证所有的延时被执行完毕，
+	延时操作通过schedule_timeout_uninterruptible函数完成，它仅仅是在把进程的状态修改
+	为TASK_UNINTERRUPTIBLE后，调用schedule_timeout来完成具体的延时操作，
+	TASK_UNINTERRUPTIBLE状态保证了msleep不会被信号唤醒，也就意味着在msleep期间，进程不能被kill掉。
+	*/
 	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
 
 	while (timeout)
@@ -1825,6 +1937,13 @@ EXPORT_SYMBOL(msleep);
  */
 unsigned long msleep_interruptible(unsigned int msecs)
 {
+	/*
+	msleep_interruptible通过schedule_timeout_interruptible中转，schedule_timeout_interruptible
+	的唯一区别就是把进程的状态设置为了TASK_INTERRUPTIBLE，说明在延时期间有信号通知，while循环会
+	马上终止，剩余的jiffies数被转换成毫秒返回。实际上，你也可以利用schedule_timeout_interruptible
+	或schedule_timeout_uninterruptible构造自己的延时函数
+
+	*/
 	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
 
 	while (timeout && !signal_pending(current))

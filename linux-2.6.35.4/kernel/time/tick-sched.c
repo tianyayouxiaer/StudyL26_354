@@ -26,6 +26,24 @@
 
 #include "tick-internal.h"
 
+//根据系统目前的工作模式，系统提供周期时钟（tick）的方式会有所不同，当处于低分辨率模式时，由cpu的tick_device提供周期时钟，而当处于高精度模式时，是由一个高精度定时器来提供周期时钟
+
+
+/*
+周期性时钟虽然简单有效，但是也带来了一些缺点，尤其在系统的功耗上，因为就算系统目前无事可做，
+也必须定期地发出时钟事件，激活系统。为此，内核的开发者提出了动态时钟这一概念，我们可以通过
+内核的配置项CONFIG_NO_HZ来激活特性。有时候这一特性也被叫做tickless，不过还是把它称呼为动态
+时钟比较合适，因为并不是真的没有tick事件了，只是在系统无事所做的idle阶段，我们可以通过停止
+周期时钟来达到降低系统功耗的目的，只要有进程处于活动状态，时钟事件依然会被周期性地发出。
+*/
+
+/*
+在动态时钟正确工作之前，系统需要切换至动态时钟模式，而要切换至动态时钟模式，需要一些前提条件，
+最主要的一条就是cpu的时钟事件设备必须要支持单触发模式，当条件满足时，系统切换至动态时钟模式，
+接着，由idle进程决定是否可以停止周期时钟，退出idle进程时则需要恢复周期时钟。
+*/
+
+
 /*
  * Per cpu nohz control structure
  */
@@ -44,6 +62,14 @@ struct tick_sched *tick_get_tick_sched(int cpu)
 /*
  * Must be called with interrupts disabled !
  */
+ //  更新全局时间（由动态时钟调用）  
+//  函数任务：  
+//      1.更新last_jiffies_update，记录距离上次更新jiffies经历的ns  
+//      2.更新jiffies_64,墙上时间，计算cpu负载  
+//      3.更新下次周期时钟的到期时间  
+//  注：  
+//      1.在关中断情况下调用该函数  
+//      2.last_jiffies_update，记录距离上次更新经历的时钟周期（ns） 
 static void tick_do_update_jiffies64(ktime_t now)
 {
 	unsigned long ticks = 0;
@@ -52,6 +78,7 @@ static void tick_do_update_jiffies64(ktime_t now)
 	/*
 	 * Do a quick check without holding xtime_lock:
 	 */
+	//距离上次更新jiffies经历的ns
 	delta = ktime_sub(now, last_jiffies_update);
 	if (delta.tv64 < tick_period.tv64)
 		return;
@@ -59,25 +86,32 @@ static void tick_do_update_jiffies64(ktime_t now)
 	/* Reevalute with xtime_lock held */
 	write_seqlock(&xtime_lock);
 
+	//一个时钟周期剩余的ns
 	delta = ktime_sub(now, last_jiffies_update);
 	if (delta.tv64 >= tick_period.tv64) {
 
 		delta = ktime_sub(delta, tick_period);
+		//正常情况下，相邻更新的jiffies差一个时钟周期
 		last_jiffies_update = ktime_add(last_jiffies_update,
 						tick_period);
 
 		/* Slow path for long timeouts */
+		//慢速路径：  
+        //  jiffies距离上次更新的时间超过一个时钟周期 
 		if (unlikely(delta.tv64 >= tick_period.tv64)) {
 			s64 incr = ktime_to_ns(tick_period);
+			//剩余的时钟周期
 
 			ticks = ktime_divns(delta, incr);
 
 			last_jiffies_update = ktime_add_ns(last_jiffies_update,
 							   incr * ticks);
 		}
+		//更新jiffies_64,更新墙上时间，计算cpu间负载
 		do_timer(++ticks);
 
 		/* Keep the tick_next_period variable up to date */
+		//周期时钟下次到期时间
 		tick_next_period = ktime_add(last_jiffies_update, tick_period);
 	}
 	write_sequnlock(&xtime_lock);
@@ -255,6 +289,26 @@ EXPORT_SYMBOL_GPL(get_cpu_iowait_time_us);
  * Called either from the idle loop or from irq_exit() when an idle period was
  * just interrupted by an interrupt which did not cause a reschedule.
  */
+//  关闭时钟  
+//  函数任务：  
+//      1.检查下一个定时器轮事件是否在一个周期之后  
+//          1.1 如果是这样，重新编程clockevent设备，直到未来合适的时间才恢复。  
+//      2.在tick_sched中更新统计信息  
+//  注：在idle进程中停用时钟  
+
+/*
+内核也不是每次进入tick_nohz_stop_sched_tick都会停止周期时钟，那么什么时候才会停止？
+我们想一想，这时候既然idle进程在运行，说明系统中的其他进程都在等待某种事件，系统处
+于无事所做的状态，唯一要处理的就是中断，除了定时器中断，其它的中断我们无法预测它
+会何时发生，但是我们可以知道最先一个到期的定时器的到期时间，也就是说，在该时间到期前，
+产生周期时钟是没有必要的，我们可以据此推算出周期时钟可以停止的tick数，然后重新对
+tick_device进行编程，使得在最早一个定时器到期前都不会产生周期时钟，实际上，
+tick_nohz_stop_sched_tick还做了一些限制：当下一个定时器的到期时间与当前jiffies值只相差1时，
+不会停止周期时钟，当定时器的到期时间与当前的jiffies值相差的时间大于timekeeper允许的最大
+idle时间时，则下一个tick时刻被设置timekeeper允许的最大idle时间，这主要是为了防止太长时间
+不去更新timekeeper中的系统时间，有可能导致clocksource的溢出问题
+*/
+
 void tick_nohz_stop_sched_tick(int inidle)
 {
 	unsigned long seq, last_jiffies, next_jiffies, delta_jiffies, flags;
@@ -434,6 +488,8 @@ void tick_nohz_stop_sched_tick(int inidle)
 			goto out;
 		}
 
+		//如果是NOHZ_MODE_HIGHRES则对tick_sched结构的sched_timer定时器进行设置，
+		//如果是NOHZ_MODE_LOWRES，则直接对tick_device进行操作
 		if (ts->nohz_mode == NOHZ_MODE_HIGHRES) {
 			hrtimer_start(&ts->sched_timer, expires,
 				      HRTIMER_MODE_ABS_PINNED);
@@ -502,6 +558,21 @@ static void tick_nohz_restart(struct tick_sched *ts, ktime_t now)
  *
  * Restart the idle tick when the CPU is woken up from idle
  */
+//  恢复时钟  
+//  函数任务：  
+//      1.更新jiffies  
+//      2.统计tick_sched中idle时间  
+//      3.设置tick_sched->tick_stopped=0，因此时钟现在再次激活  
+//      4.重编程clockevent设备  
+/*
+
+先是把上一次停止周期时钟的时刻设置到tick_sched结构的sched_timer定时器中，
+然后在通过hrtimer_forward函数把该定时器的到期时刻设置为当前时间的下一个tick时刻，
+对于高精度模式，启动该定时器即可，对于低分辨率模式，使用该时间对tick_device重新编程，
+最后通过tick_do_update_jiffies64更新jiffies数值，为了防止此时正在一个tick时刻的边界，
+可能当前时刻正好刚刚越过了该到期时间，函数使用了一个while循环：
+
+*/
 void tick_nohz_restart_sched_tick(void)
 {
 	int cpu = smp_processor_id();
@@ -556,9 +627,14 @@ void tick_nohz_restart_sched_tick(void)
 
 	tick_nohz_restart(ts, now);
 
-	local_irq_enable();
+tick_nohz_idle_enter	local_irq_enable();
 }
 
+/*
+因为现在工作于动态时钟模式，所以，tick时钟可能在idle进程中被停掉不止一个tick周期，
+所以当该函数被再次触发时，离上一次触发的时间可能已经不止一个tick周期，tick_nohz_reprogram
+对tick_device进行编程时必须正确地处理这一情况，它利用hrtimer_forward函数来实现这一特性
+*/
 static int tick_nohz_reprogram(struct tick_sched *ts, ktime_t now)
 {
 	hrtimer_forward(&ts->sched_timer, now, tick_period);
@@ -568,6 +644,22 @@ static int tick_nohz_reprogram(struct tick_sched *ts, ktime_t now)
 /*
  * The nohz low res interrupt handler
  */
+//  低分辨率动态事件处理函数  
+//  函数任务：  
+//      1.选择cpu负责更新jiffies  
+//      2.如果距离上次更新jiffies已经有1 jiffy，更新jiffies  
+//      3.如果动态时钟已经停止，说明当前在idle状态，喂狗，防止发生softlockup  
+//      4.更新当前进程的运行时间  
+//      6.更新动态时钟的下个周期时间  
+//      7.重编程tick device在动态时钟的下个周期时间到期  
+//  注：tick_do_timer_cpu 保存负责更新jiffies的cpu
+
+/*
+它和周期时钟模式的事件处理函数tick_handle_periodic所完成的工作大致类似：
+更新时间、更新jiffies计数值、调用update_process_time更新进程信息和触发定时器软中断等等，
+最后重新编程tick_device，使得它在下一个正确的tick时刻再次触发本函数：
+
+*/
 static void tick_nohz_handler(struct clock_event_device *dev)
 {
 	struct tick_sched *ts = &__get_cpu_var(tick_cpu_sched);
@@ -584,10 +676,12 @@ static void tick_nohz_handler(struct clock_event_device *dev)
 	 * this duty, then the jiffies update is still serialized by
 	 * xtime_lock.
 	 */
+	 //保证tick device在最近的时间内不会到期
 	if (unlikely(tick_do_timer_cpu == TICK_DO_TIMER_NONE))
 		tick_do_timer_cpu = cpu;
 
 	/* Check, if the jiffies need an update */
+	//选择cpu负责更新jiffies
 	if (tick_do_timer_cpu == cpu)
 		tick_do_update_jiffies64(now);
 
@@ -599,14 +693,17 @@ static void tick_nohz_handler(struct clock_event_device *dev)
 	 * of idle" jiffy stamp so the idle accounting adjustment we
 	 * do when we go busy again does not account too much ticks.
 	 */
+	 //动态时钟停止，说明当前在idle状态，喂狗，防止发生softlockup 
 	if (ts->tick_stopped) {
 		touch_softlockup_watchdog();
 		ts->idle_jiffies++;
 	}
-
+	
+	//更新进程的运行时间
 	update_process_times(user_mode(regs));
 	profile_tick(CPU_PROFILING);
-
+	
+	//重编程clockevent设备
 	while (tick_nohz_reprogram(ts, now)) {
 		now = ktime_get();
 		tick_do_update_jiffies64(now);
@@ -616,6 +713,14 @@ static void tick_nohz_handler(struct clock_event_device *dev)
 /**
  * tick_nohz_switch_to_nohz - switch to nohz mode
  */
+//  切换低分辨率模式的动态时钟  
+//  函数任务：  
+//      1.更新tick device单触发方式，安装nohz事件处理函数  
+//      2.初始化动态时钟数据结构  
+//          2.1 标识动态时钟当前为低分辨率模式  
+//          2.2 动态时钟通过单调时钟基础管理  
+//          2.3 更新动态时钟到期时间  
+//      3.更新动态时钟，tick device到期时间  
 static void tick_nohz_switch_to_nohz(void)
 {
 	struct tick_sched *ts = &__get_cpu_var(tick_cpu_sched);
@@ -625,21 +730,32 @@ static void tick_nohz_switch_to_nohz(void)
 		return;
 
 	local_irq_disable();
+	//tick_device的工作模式设置为单触发模式，并把它的中断事件回调函数置换为tick_nohz_handler 
 	if (tick_switch_to_oneshot(tick_nohz_handler)) {
 		local_irq_enable();
 		return;
 	}
 
+	//tick_sched结构中的模式字段设置为NOHZ_MODE_LOWRES
 	ts->nohz_mode = NOHZ_MODE_LOWRES;
 
 	/*
 	 * Recycle the hrtimer in ts, so we can share the
 	 * hrtimer_forward with the highres code.
 	 */
+	 //初始化tick_sched结构中的sched_timer定时器
+	 /*
+	 明明现在没有切换至高精度模式，为什么要初始化tick_sched结构中的高精度定时器？
+	 原因并不是要使用它的定时功能，而是想重用hrtimer代码中的hrtimer_forward函数，
+	 利用这个函数来计算下一次tick事件的时间。
+	 */
 	hrtimer_init(&ts->sched_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
 	/* Get the next period */
+	
+	//获取下一次tick事件的时间并初始化全局变量last_jiffies_update，以便后续可以正确地更新jiffies计数值
 	next = tick_init_jiffy_update();
 
+	//把下一次tick事件的时间编程到tick_device中，到此，系统完成了到低分辨率动态时钟的切换过程。
 	for (;;) {
 		hrtimer_set_expires(&ts->sched_timer, next);
 		if (!tick_program_event(next, 0))
@@ -709,9 +825,16 @@ static inline void tick_check_nohz(int cpu) { }
 /*
  * Called from irq_enter to notify about the possible interruption of idle()
  */
+ /*
+ 在进入和退出中断时，因为动态时钟的关系，中断系统需要作出一些配合。
+ 先说中断发生于周期时钟停止期间，如果不做任何处理，中断服务程序中如果要访问jiffies计数值，
+ 可能得到一个滞后的jiffies值，因为正常状态下，jiffies值会在恢复周期时钟时正确地更新，所以，
+ 为了防止这种情况发生，在进入中断的irq_enter期间，tick_check_idle会被调用
+ */
 void tick_check_idle(int cpu)
 {
 	tick_check_oneshot_broadcast(cpu);
+	//最重要的作用就是更新jiffies计数值
 	tick_check_nohz(cpu);
 }
 
@@ -723,6 +846,16 @@ void tick_check_idle(int cpu)
  * We rearm the timer until we get disabled by the idle code.
  * Called with interrupts disabled and timer->base->cpu_base->lock held.
  */
+//  高分辨率模式下的周期事件仿真  
+//      通过hrtimer仿真周期时钟，由hrtimer_interrupt作为时钟事件处理函数  
+//  函数任务：  
+//      1.更新jiffies  
+//      2.在irq上下文  
+//          2.1 如果当前处于idle状态  
+//              2.1.1 喂狗softlockup_watchdog,防止误发生softlockup  
+//              2.1.2 更新idle状态经历的jiffies  
+//          2.2 更新进程时间  
+//      3.调度hrtimer下一个周期继续运行  
 static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 {
 	struct tick_sched *ts =
@@ -730,6 +863,8 @@ static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 	struct pt_regs *regs = get_irq_regs();
 	ktime_t now = ktime_get();
 	int cpu = smp_processor_id();
+	
+	//高分辨率模式下，如果支持动态时钟，则需要检查是否本cpu负责更新全局时间
 
 #ifdef CONFIG_NO_HZ
 	/*
@@ -739,6 +874,7 @@ static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 	 * this duty, then the jiffies update is still serialized by
 	 * xtime_lock.
 	 */
+	 //负责更新jiffies
 	if (unlikely(tick_do_timer_cpu == TICK_DO_TIMER_NONE))
 		tick_do_timer_cpu = cpu;
 #endif
@@ -751,6 +887,7 @@ static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 	 * Do not call, when we are not in irq context and have
 	 * no valid regs pointer
 	 */
+	 //在irq上下文
 	if (regs) {
 		/*
 		 * When we are idle and the tick is stopped, we have to touch
@@ -760,14 +897,19 @@ static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 		 * idle" jiffy stamp so the idle accounting adjustment we do
 		 * when we go busy again does not account too much ticks.
 		 */
+		  //当前处于idle状态
 		if (ts->tick_stopped) {
+			//喂狗，防止误发生softlockup
 			touch_softlockup_watchdog();
+			//更新idle状态的jiffies
 			ts->idle_jiffies++;
 		}
+		//更新进程时间
 		update_process_times(user_mode(regs));
 		profile_tick(CPU_PROFILING);
 	}
-
+	
+	//调度hrtimer下一个周期继续运行
 	hrtimer_forward(timer, now, tick_period);
 
 	return HRTIMER_RESTART;
@@ -776,6 +918,12 @@ static enum hrtimer_restart tick_sched_timer(struct hrtimer *timer)
 /**
  * tick_setup_sched_timer - setup the tick emulation timer
  */
+//  初始化动态时钟  
+//  调用路径：hrtimer_switch_to_hres->tick_setup_sched_timer  
+//  函数任务：  
+//      1.初始化动态时钟的hrtimer  
+//      2.安装动态时钟的回调函数  
+//      3.更新动态时钟下一个jiffies到期
 void tick_setup_sched_timer(void)
 {
 	struct tick_sched *ts = &__get_cpu_var(tick_cpu_sched);
@@ -785,16 +933,20 @@ void tick_setup_sched_timer(void)
 	/*
 	 * Emulate tick processing via per-CPU hrtimers:
 	 */
+	 //初始化hrtimer
 	hrtimer_init(&ts->sched_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
+	//动态时钟的回调函数
 	ts->sched_timer.function = tick_sched_timer;
 
 	/* Get the next period (per cpu) */
+	//下一个jiffies到期
 	hrtimer_set_expires(&ts->sched_timer, tick_init_jiffy_update());
 	offset = ktime_to_ns(tick_period) >> 1;
 	do_div(offset, num_possible_cpus());
 	offset *= smp_processor_id();
 	hrtimer_add_expires_ns(&ts->sched_timer, offset);
 
+	//编程启动动态时钟 
 	for (;;) {
 		hrtimer_forward(&ts->sched_timer, now, tick_period);
 		hrtimer_start_expires(&ts->sched_timer,
@@ -855,22 +1007,43 @@ void tick_oneshot_notify(void)
  * mode, because high resolution timers are disabled (either compile
  * or runtime).
  */
+ // 判断系统是否可以切换到高精度模式
 int tick_check_oneshot_change(int allow_nohz)
 {
 	struct tick_sched *ts = &__get_cpu_var(tick_cpu_sched);
 
+	/*
+	判断check_clock标志的第0位是否被置位，如果没有置位，说明系统中没有注册
+	符合要求的时钟事件设备，函数直接返回，check_clock标志由clocksource和
+	clock_event_device系统的notify系统置位，当系统中有更高精度的clocksource
+	被注册和选择后，或者有更精确的支持CLOCK_EVT_MODE_ONESHOT模式的clock_event_device
+	被注册时，通过它们的notify函数，check_clock标志的第0为会置位。
+	*/
 	if (!test_and_clear_bit(0, &ts->check_clocks))
 		return 0;
+	/*
+	如果tick_sched结构中的nohz_mode字段不是NOHZ_MODE_INACTIVE，表明系统已经切换到其它模式，
+	直接返回。nohz_mode的取值有3种：
+	
+	NOHZ_MODE_INACTIVE	  // 未启用NO_HZ模式
+	NOHZ_MODE_LOWRES	// 启用NO_HZ模式，hrtimer工作于低精度模式下
+	NOHZ_MODE_HIGHRES	// 启用NO_HZ模式，hrtimer工作于高精度模式下
 
+	*/
 	if (ts->nohz_mode != NOHZ_MODE_INACTIVE)
 		return 0;
 
+	/*
+	接下来的timerkeeping_valid_for_hres判断timekeeper系统是否支持高精度模式，
+	tick_is_oneshot_available判断tick_device是否支持CLOCK_EVT_MODE_ONESHOT模式。
+
+	*/
 	if (!timekeeping_valid_for_hres() || !tick_is_oneshot_available())
 		return 0;
 
 	if (!allow_nohz)
 		return 1;
-
+	//切换至动态时钟
 	tick_nohz_switch_to_nohz();
 	return 0;
 }

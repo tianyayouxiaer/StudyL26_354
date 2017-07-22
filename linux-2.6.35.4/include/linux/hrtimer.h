@@ -41,6 +41,7 @@ enum hrtimer_mode {
 /*
  * Return values for the callback function
  */
+ // 超时回调函数返回值，决定是否需要再被重新激活
 enum hrtimer_restart {
 	HRTIMER_NORESTART,	/* Timer is not restarted */
 	HRTIMER_RESTART,	/* Timer must be restarted */
@@ -102,7 +103,7 @@ enum hrtimer_restart {
  */
 struct hrtimer {
 	struct rb_node			node;
-	ktime_t				_expires;
+	ktime_t				_expires;//定时器的到期时间
 	ktime_t				_softexpires;
 	enum hrtimer_restart		(*function)(struct hrtimer *);
 	struct hrtimer_clock_base	*base;
@@ -138,16 +139,27 @@ struct hrtimer_sleeper {
  * @softirq_time:	the time when running the hrtimer queue in the softirq
  * @offset:		offset of this clock to the monotonic base
  */
+ /*
+ 每个cpu有一个hrtimer_cpu_base结构；
+ hrtimer_cpu_base结构管理着3种不同的时间基准系统的hrtimer，分别是：实时时间，启动时间和单调时间；
+ 每种时间基准系统通过它的active字段（timerqueue_head结构指针），指向它们各自的红黑树；
+ 红黑树上，按到期时间进行排序，最先到期的hrtimer位于最左下的节点，并被记录在active.next字段中；
+ 3中时间基准的最先到期时间可能不同，所以，它们之中最先到期的时间被记录在hrtimer_cpu_base的
+ expires_next字段中。
+ */
+
+ //  时钟基础数据结构  
+//   hrtimer组织成红黑树的形式  
 struct hrtimer_clock_base {
-	struct hrtimer_cpu_base	*cpu_base;
-	clockid_t		index;
-	struct rb_root		active;
-	struct rb_node		*first;
-	ktime_t			resolution;
-	ktime_t			(*get_time)(void);
-	ktime_t			softirq_time;
+	struct hrtimer_cpu_base	*cpu_base;// 指向所属cpu的hrtimer_cpu_base结构
+	clockid_t		index;//用于区分CLOCK_MONOTONIC,CLOCK_REALTIME 
+	struct rb_root		active;// 红黑树，包含了所有使用该时间基准系统的hrtimer
+	struct rb_node		*first;//第一个到期的hrtimer 
+	ktime_t			resolution;// 时间基准系统的分辨率 
+	ktime_t			(*get_time)(void);// 获取该基准系统的时间函数
+	ktime_t			softirq_time; //第一个到期的hrtimer 
 #ifdef CONFIG_HIGH_RES_TIMERS
-	ktime_t			offset;
+	ktime_t			offset;//时钟相对于单调时钟的偏移  
 #endif
 };
 
@@ -168,17 +180,25 @@ struct hrtimer_clock_base {
  * @nr_hangs:		Total number of hrtimer interrupt hangs
  * @max_hang_time:	Maximum time spent in hrtimer_interrupt
  */
+ /*
+ 和低分辨率定时器一样，处于效率和上锁的考虑，每个cpu单独管理属于自己的hrtimer，
+ 为此，专门定义了一个结构hrtimer_cpu_base：
+ */
+ //  cpu时钟基础数据结构  
+//      提供两种时钟基础  
+//          CLOCK_MONOTOMIC,系统启动时从0开始，不会跳变，始终单调的运行  
+//          CLOCK_REALTIME,系统的实际时间，当系统时间改变时，会发生跳变
 struct hrtimer_cpu_base {
 	raw_spinlock_t			lock;
-	struct hrtimer_clock_base	clock_base[HRTIMER_MAX_CLOCK_BASES];
+	struct hrtimer_clock_base	clock_base[HRTIMER_MAX_CLOCK_BASES];//当前cpu的时钟基础
 #ifdef CONFIG_HIGH_RES_TIMERS
-	ktime_t				expires_next;
-	int				hres_active;
-	int				hang_detected;
-	unsigned long			nr_events;
-	unsigned long			nr_retries;
-	unsigned long			nr_hangs;
-	ktime_t				max_hang_time;
+	ktime_t				expires_next;//下一次事件到期的绝对时间
+	int				hres_active;//高分辨率状态
+	int				hang_detected;//最近一次hrtimer检测到挂起
+	unsigned long			nr_events;//中断事件总数
+	unsigned long			nr_retries;//有效的中断事件总数
+	unsigned long			nr_hangs;//中断挂起的次数
+	ktime_t				max_hang_time; //中断处理程序hrtimer_interrupt可花费的最大时间
 #endif
 };
 
