@@ -3,4 +3,6 @@ si
 Documentation
 drivers
 arch
+!/arch/x86
+!/arch/arm
 *.xml
