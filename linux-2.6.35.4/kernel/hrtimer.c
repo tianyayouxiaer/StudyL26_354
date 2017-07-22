@@ -1322,6 +1322,10 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
 //      5.根据花费的时间计算时钟事件设备下一次到期的时间  
 //          5.1 如果处理hrtimer花费时间超过1ms，推迟下一次到期时间为1ms后  
 //          5.2 否则下一次到期时间为花费的时间  
+
+
+//一旦开启了hrtimer，tick_device所关联的clock_event_device的事件回调函数会被修改为：hrtimer_interrupt，
+//并且会被设置成工作于CLOCK_EVT_MODE_ONESHOT单触发模式。
 void hrtimer_interrupt(struct clock_event_device *dev)
 {
 	struct hrtimer_cpu_base *cpu_base = &__get_cpu_var(hrtimer_bases);
