@@ -1,4 +1,4 @@
-/*  linux/include/linux/clockchips.h
+v/*  linux/include/linux/clockchips.h
  *
  *  This file contains the structure definitions for clockchips.
  *

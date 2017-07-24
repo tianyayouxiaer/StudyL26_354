@@ -36,6 +36,10 @@ struct ipc_namespace init_ipc_ns = {
 
 atomic_t nr_ipc_ns = ATOMIC_INIT(1);
 
+/*
+msg_msgseg只需要存储指向下一链表块的指针就行了，每个msg_msgseg也将占据一个page的空间，
+其中一个page除了存储该结构体，剩下的部分都将用来存储message的数据。
+*/
 struct msg_msgseg {
 	struct msg_msgseg* next;
 	/* the next part of the message follows immediately */

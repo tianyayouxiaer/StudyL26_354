@@ -3,6 +3,9 @@
 
 #include <linux/ipc.h>
 
+
+//说明： http://blog.csdn.net/kipdoudou/article/details/50000765
+
 /* ipcs ctl commands */
 #define MSG_STAT 11
 #define MSG_INFO 12
@@ -12,6 +15,7 @@
 #define MSG_EXCEPT      020000  /* recv any msg except of specified type.*/
 
 /* Obsolete, used only for backwards compatibility and libc5 compiles */
+// 消息队列状态msqid_ds,消息队列状态msqid_ds
 struct msqid_ds {
 	struct ipc_perm msg_perm;
 	struct msg *msg_first;		/* first message on queue,unused  */
@@ -75,6 +79,15 @@ struct msginfo {
 #include <linux/list.h>
 
 /* one msg_msg structure for each message */
+
+/*
+消息的基本数据结构，每个msg_msg将占据一个page的内容，其中一个page除了存储该结构体，
+空余的部分直接用来存储消息的内容。其中记录了一条消息的type和size，next指针用于指向msg_msgseg结构。
+
+在消息队列的设计中，若消息内容大于一个page，则会使用一个类似链表的结构，但是后面的节点不需要再标记
+type和size等数据，后面的节点用msg_msgseg表示。
+
+*/
 struct msg_msg {
 	struct list_head m_list; 
 	long  m_type;          

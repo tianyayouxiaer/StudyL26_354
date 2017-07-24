@@ -679,6 +679,14 @@ static void clocksource_enqueue(struct clocksource *cs)
  * This *SHOULD NOT* be called directly! Please use the
  * clocksource_register_hz() or clocksource_register_khz helper functions.
  */
+ /*
+ 该函数首先完成对mult和shift值的计算，然后根据mult和shift值，最终通过clocksource_max_deferment获
+ 得该clocksource可接受的最大IDLE时间，并记录在clocksource的max_idle_ns字段中。clocksource_enqueue
+ 函数负责按clocksource的rating的大小，把该clocksource按顺序挂在全局链表clocksource_list上，rating值越大，
+ 在链表上的位置越靠前。每次新的clocksource注册进来，都会触发clocksource_select函数被调用，它按照rating
+ 值选择最好的clocksource，并记录在全局变量curr_clocksource中，然后通过timekeeping_notify函数通知timekeeping，
+ 当前clocksource已经变更
+ */
 int __clocksource_register_scale(struct clocksource *cs, u32 scale, u32 freq)
 {
 

@@ -1325,7 +1325,7 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
 
 
 //一旦开启了hrtimer，tick_device所关联的clock_event_device的事件回调函数会被修改为：hrtimer_interrupt，
-//并且会被设置成工作于CLOCK_EVT_MODE_ONESHOT单触发模式。
+//5并且会被设置成工作于CLOCK_EVT_MODE_ONESHOT单触发模式。
 void hrtimer_interrupt(struct clock_event_device *dev)
 {
 	struct hrtimer_cpu_base *cpu_base = &__get_cpu_var(hrtimer_bases);
