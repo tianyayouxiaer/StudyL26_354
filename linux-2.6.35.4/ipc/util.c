@@ -295,6 +295,7 @@ int ipc_addid(struct ipc_ids* ids, struct kern_ipc_perm* new, int size)
  *	This routine is called by sys_msgget, sys_semget() and sys_shmget()
  *	when the key is IPC_PRIVATE.
  */
+ //生成一个新的ipc对象
 static int ipcget_new(struct ipc_namespace *ns, struct ipc_ids *ids,
 		struct ipc_ops *ops, struct ipc_params *params)
 {
@@ -359,6 +360,7 @@ static int ipc_check_perms(struct kern_ipc_perm *ipcp, struct ipc_ops *ops,
  *
  *	On success, the ipc id is returned.
  */
+ //该函数返回SEM_ID，即为信号量的标志符
 static int ipcget_public(struct ipc_namespace *ns, struct ipc_ids *ids,
 		struct ipc_ops *ops, struct ipc_params *params)
 {
@@ -373,7 +375,8 @@ retry:
 	 * a new entry + read locks are not "upgradable"
 	 */
 	down_write(&ids->rw_mutex);
-	ipcp = ipc_findkey(ids, params->key);
+	ipcp = ipc_findkey(ids, params->key);//是否已经存在键值相同的IPCP
+	//不存在
 	if (ipcp == NULL) {
 		/* key not used */
 		if (!(flg & IPC_CREAT))
@@ -384,13 +387,14 @@ retry:
 			err = ops->getnew(ns, params);
 	} else {
 		/* ipc object has been locked by ipc_findkey() */
-
+		//该分支中存在相同的IPCP
 		if (flg & IPC_CREAT && flg & IPC_EXCL)
 			err = -EEXIST;
 		else {
 			err = 0;
 			if (ops->more_checks)
 				err = ops->more_checks(ipcp, params);
+			//即调用传入的回调函数sem_ops.more_checks =sem_more_checks;该函数判断信号量的个数是否正确
 			if (!err)
 				/*
 				 * ipc_check_perms returns the IPC id on
@@ -398,6 +402,7 @@ retry:
 				 */
 				err = ipc_check_perms(ipcp, ops, params);
 		}
+		//返回成功的IPCP
 		ipc_unlock(ipcp);
 	}
 	up_write(&ids->rw_mutex);
@@ -476,11 +481,29 @@ void ipc_free(void* ptr, int size)
  * Unlike a normal union, they are right-aligned, thus some container_of
  * forward/backward casting is necessary:
  */
+ /*
+ 进程间通信是进程最常见的操作，进程间通信的效率直接影响程序的执行效率。为了提供同步操作IPC对象的效率，
+ Linux内核使用了自旋锁、读/写 信号量、RCU、删除标识和引用计数等机制。同步机制以数据结构操作为中心，针
+ 对不同大小的数据结构操作，使用不同的同步机制。自旋锁用于操作占用内存少、操作快速的小型数据结构， 如：
+ 结构kern_ipc_perm；读/写信号量用于读操作明显多于写操作的中小型数据结构，如：结构ipc_ids，它还含有一个
+ 用于IDR机制简单 的radix树；RCU用于操作含有队列或链表、操作时间较长的大型数据结构。如：sem_array，它含
+ 有多个链表。删除标识和引用计数用于协调各种 同步机制
+
+ */
+
+ /*
+ 为了让IPC支持RCU，在IPC对象前面需要加入与RCU操作相关的前缀对象，这样，可最小限度地改动原函数。
+ 前缀对象结构有ipc_rcu_hdr、 ipc_rcu_grace和ipc_rcu_sched三种，ipc_rcu_hdr在原对象使用期间使用，
+ 增加了引用计数成 员；ipc_rcu_grace在RCU宽限期间使用，增加了RCU更新请求链表；ipc_rcu_sched仅在
+ 使用函数vmalloc时使用，增加了 vmalloc所需要的工作函数。这些对象放在原对象前面，与原对象使用同
+ 一个内存块，通过函数container_of可分离前缀对象和原对象
+
+ */
 struct ipc_rcu_hdr
 {
 	int refcount;
 	int is_vmalloc;
-	void *data[0];
+	void *data[0];/*对于信号量对象，它指向信号量集数组sem_array *sma，用于从IPC对象获取本结构*/
 };
 
 
@@ -493,15 +516,17 @@ struct ipc_rcu_grace
 
 struct ipc_rcu_sched
 {
-	struct work_struct work;
+	struct work_struct work;/*工作队列的工作函数，函数vmalloc需要使用工作队列 */
 	/* "void *" makes sure alignment of following data is sane. */
 	void *data[0];
 };
 
+//IPC前缀对象尺寸计算的宏定义列出如下：
 #define HDRLEN_KMALLOC		(sizeof(struct ipc_rcu_grace) > sizeof(struct ipc_rcu_hdr) ? \
 					sizeof(struct ipc_rcu_grace) : sizeof(struct ipc_rcu_hdr))
 #define HDRLEN_VMALLOC		(sizeof(struct ipc_rcu_sched) > HDRLEN_KMALLOC ? \
 					sizeof(struct ipc_rcu_sched) : HDRLEN_KMALLOC)
+
 
 static inline int rcu_use_vmalloc(int size)
 {
@@ -519,7 +544,12 @@ static inline int rcu_use_vmalloc(int size)
  *	Returns the pointer to the object.
  *	NULL is returned if the allocation fails. 
  */
- 
+
+/*
+用户分配IPC对象空间时，调用函数ipc_rcu_alloc分配内存。函数ipc_rcu_alloc封装了内存分配函数，
+在IPC对象前面加 入了RCU前缀对象，并初始化前缀对象。函数的参数size为IPC对象的大小，返回指
+向前缀对象和IPC对象（称为RCU IPC对象）所在内存块的地址。
+*/
 void* ipc_rcu_alloc(int size)
 {
 	void* out;
@@ -527,10 +557,13 @@ void* ipc_rcu_alloc(int size)
 	 * We prepend the allocation with the rcu struct, and
 	 * workqueue if necessary (for vmalloc). 
 	 */
+	 
 	if (rcu_use_vmalloc(size)) {
+	/*如果分配尺寸大于1个物理页时，使用分配函数vmalloc*/
 		out = vmalloc(HDRLEN_VMALLOC + size);
 		if (out) {
 			out += HDRLEN_VMALLOC;
+			 /*利用函数container_of从IPC对象获取前缀对象，并初始化前缀对象的结构成员*/
 			container_of(out, struct ipc_rcu_hdr, data)->is_vmalloc = 1;
 			container_of(out, struct ipc_rcu_hdr, data)->refcount = 1;
 		}
@@ -543,9 +576,11 @@ void* ipc_rcu_alloc(int size)
 		}
 	}
 
+	/*返回RCU IPC对象的地址*/
 	return out;
 }
 
+//增加引用计数
 void ipc_rcu_getref(void *ptr)
 {
 	container_of(ptr, struct ipc_rcu_hdr, data)->refcount++;
@@ -589,6 +624,7 @@ static void ipc_immediate_free(struct rcu_head *head)
 	kfree(free);
 }
 
+//将应用计数减1，当引用计数为0时，调用call_rcu进行延迟更新
 void ipc_rcu_putref(void *ptr)
 {
 	if (--container_of(ptr, struct ipc_rcu_hdr, data)->refcount > 0)
@@ -697,6 +733,7 @@ struct kern_ipc_perm *ipc_lock(struct ipc_ids *ids, int id)
 	rcu_read_lock();
 	out = idr_find(&ids->ipcs_idr, lid);
 	if (out == NULL) {
+		//操作ids用读/写信号量，加读者锁
 		rcu_read_unlock();
 		return ERR_PTR(-EINVAL);
 	}
@@ -715,15 +752,22 @@ struct kern_ipc_perm *ipc_lock(struct ipc_ids *ids, int id)
 	return out;
 }
 
+//函数ipc_lock_check在获取IPC对象后，检查对象的id序列号是否正确
 struct kern_ipc_perm *ipc_lock_check(struct ipc_ids *ids, int id)
 {
 	struct kern_ipc_perm *out;
 
+	/*
+	函数ipc_lock在ids中查找一个id，查找过程加读者锁，找到id获取IPC对象后，锁住对象。
+	该函数在返回时，仍然锁住IPC对象，以便通信操 作修改IPC对象。
+	*/
 	out = ipc_lock(ids, id);
+	 /*通过id查找到结构kern_ipc_perm类型的对象*/
 	if (IS_ERR(out))
 		return out;
 
 	if (ipc_checkid(out, id)) {
+	/*检查id的序列号是否正确：id / 32768 != out->seq*/
 		ipc_unlock(out);
 		return ERR_PTR(-EIDRM);
 	}
@@ -741,12 +785,17 @@ struct kern_ipc_perm *ipc_lock_check(struct ipc_ids *ids, int id)
  *
  * Common routine called by sys_msgget(), sys_semget() and sys_shmget().
  */
+
+ 
 int ipcget(struct ipc_namespace *ns, struct ipc_ids *ids,
 			struct ipc_ops *ops, struct ipc_params *params)
 {
+	//由内核负责选择一个关键字然后生成一个IPC对象并把IPC标识符直接传递给另一个进程。
+	//如果传进来的参数是IPC_PRIVATE（这个宏的值是0）的话，无论是什么mode，都会创建一块新的共享内存/消息队列/信号量。
 	if (params->key == IPC_PRIVATE)
 		return ipcget_new(ns, ids, ops, params);
 	else
+		//如果非0，则会去已有的共享内存/消息队列/信号量中找有没有这个key的，有就返回，没有就新建。
 		return ipcget_public(ns, ids, ops, params);
 }
 

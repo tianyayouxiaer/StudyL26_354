@@ -158,6 +158,7 @@ static inline struct sem_array *sem_lock(struct ipc_namespace *ns, int id)
 	return container_of(ipcp, struct sem_array, sem_perm);
 }
 
+//通过id查找到IPC对象并加上自旋锁，以便修改对象,再调用函数container_of获取信号量对象
 static inline struct sem_array *sem_lock_check(struct ipc_namespace *ns,
 						int id)
 {
@@ -169,6 +170,8 @@ static inline struct sem_array *sem_lock_check(struct ipc_namespace *ns,
 	return container_of(ipcp, struct sem_array, sem_perm);
 }
 
+//在对IPC对象进行修改时，操作还应加上自旋锁，例如：信号量对象修改的加锁函数sem_lock_and_putref和
+//解锁函数 sem_getref_and_unlock
 static inline void sem_lock_and_putref(struct sem_array *sma)
 {
 	ipc_lock_by_ptr(&sma->sem_perm);

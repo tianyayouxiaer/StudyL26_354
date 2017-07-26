@@ -48,6 +48,22 @@
 #define STATE_PENDING	1
 #define STATE_READY	2
 
+/*
+消息队列分别有POSIX和System V的消息队列系统调用，其中属于POSIX的系统调用有 
+sys_mq_open，sys_mq_unlink，sys_mq_timedsend，sys_mq_timedreceive，sys_mq_notify，sys_mq_getsetattr，
+属于System V的消息队列系统调用有sys_msgget，sys_msgsnd，sys_msgrcv，sys_msgctl。
+
+POSIX消息队列是利用消息队列文件系统来实现，一个文件代表一个消息队列。
+利用文件节点的结构扩展进消息队列信息结构来容纳消息内容。System V的消息
+队列实现是在内核内存中建立消息队列的结构缓存区，通过自定义的消息队列ID，
+在全局变量static struct ipc_ids msg_ids中定位找到消息队列的结构缓存区，
+并最终找到消息。全局数据结构struct ipc_ids msg_ids可以访问到每个消息队列
+头的第一个成员：struct kern_ipc_perm；而每个struct kern_ipc_perm能够与具体
+的消息队列对应起来，是因为在该结构中，有一个key_t类型成员key，而key则惟
+一确定一个消息队列。 
+*/
+
+//POSIX消息队列是用特殊的消息队列文件系统来与用户空间进行接口的。
 struct ext_wait_queue {		/* queue of sleeping tasks */
 	struct task_struct *task;
 	struct list_head list;
@@ -806,6 +822,7 @@ out_unlock:
 /* pipelined_send() - send a message directly to the task waiting in
  * sys_mq_timedreceive() (without inserting message into a queue).
  */
+ //发送消息时会调用，条件是在发送进程进行发送的时候恰巧接收进程同时也准备好接收了
 static inline void pipelined_send(struct mqueue_inode_info *info,
 				  struct msg_msg *message,
 				  struct ext_wait_queue *receiver)
@@ -1262,6 +1279,7 @@ void mq_put_mnt(struct ipc_namespace *ns)
 	mntput(ns->mq_mnt);
 }
 
+//函数init_mqueue_fs初始化消息队列文件系统。它注册消息队列文件系统结构，并挂接到系统中。
 static int __init init_mqueue_fs(void)
 {
 	int error;

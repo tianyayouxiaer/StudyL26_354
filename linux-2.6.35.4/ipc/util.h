@@ -51,13 +51,14 @@ static inline void shm_exit_ns(struct ipc_namespace *ns) { }
  * Structure that holds the parameters needed by the ipc operations
  * (see after)
  */
+ //ipc 参数
 struct ipc_params {
 	key_t key;
 	int flg;
 	union {
 		size_t size;	/* for shared memories */
-		int nsems;	/* for semaphores */
-	} u;			/* holds the getnew() specific param */
+		int nsems;		/* for semaphores */
+	} u;				/* holds the getnew() specific param */
 };
 
 /*
@@ -70,10 +71,11 @@ struct ipc_params {
  *        security_shm_associate
  *      . routine to call for an extra check if needed
  */
+ //ipc操作函数接口，为sys_msgget(), sys_semget(), sys_shmget()提供统一的接口
 struct ipc_ops {
-	int (*getnew) (struct ipc_namespace *, struct ipc_params *);
-	int (*associate) (struct kern_ipc_perm *, int);
-	int (*more_checks) (struct kern_ipc_perm *, struct ipc_params *);
+	int (*getnew) (struct ipc_namespace *, struct ipc_params *);//创建一个ipc对象，newque，newary或者newseg
+	int (*associate) (struct kern_ipc_perm *, int);//检查ipc对象权限
+	int (*more_checks) (struct kern_ipc_perm *, struct ipc_params *);//更多检查
 };
 
 struct seq_file;
@@ -150,6 +152,7 @@ static inline int ipc_buildid(int id, int seq)
 /*
  * Must be called with ipcp locked
  */
+ //ipc通用对象加锁函数ipc_lock_by_ptr和解锁函数ipc_unlock
 static inline int ipc_checkid(struct kern_ipc_perm *ipcp, int uid)
 {
 	if (uid / SEQ_MULTIPLIER != ipcp->seq)

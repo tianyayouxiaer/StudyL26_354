@@ -42,24 +42,39 @@
 #include <asm/uaccess.h>
 #include "util.h"
 
+
+/*
+消息队列就是一个消息的链表。具有权限的一个或者多个进程进程可对消息队列进行读写。
+
+System V的消息队列实现是在内核内存中建立消息队列的结构缓存区，通过自定义的消息队列ID，
+在全局变量static struct ipc_ids msg_ids中定位找到消息队列的结构缓存区，并最终找到消息。
+全局数据结构struct ipc_ids msg_ids可以访问到每个消息队列头的第一个成员：struct kern_ipc_perm；
+而每个struct kern_ipc_perm能够与具体的消息队列对应起来，是因为在该结构中，有一个key_t类型成员key，
+而key则惟一确定一个消息队列。 
+
+*/
+
 /*
  * one msg_receiver structure for each sleeping receiver:
  */
+ //在队列上睡眠的receiver数据结构
+ //每个正在睡眠的接收者用一个msg_receiver结构描述
 struct msg_receiver {
 	struct list_head	r_list;
-	struct task_struct	*r_tsk;
+	struct task_struct	*r_tsk;//进行读操作的进程
 
-	int			r_mode;
-	long			r_msgtype;
-	long			r_maxsize;
+	int			r_mode;//读的方式
+	long			r_msgtype;//读的消息类型
+	long			r_maxsize;//读消息的最大尺寸
 
-	struct msg_msg		*volatile r_msg;
+	struct msg_msg		*volatile r_msg;//最后将用于存储取得的消息
 };
 
 /* one msg_sender for each sleeping sender */
+//每个正在睡眠的发送者用一个msg_sender结构描述
 struct msg_sender {
 	struct list_head	list;
-	struct task_struct	*tsk;
+	struct task_struct	*tsk; //发送消息的进程
 };
 
 #define SEARCH_ANY		1
@@ -67,6 +82,10 @@ struct msg_sender {
 #define SEARCH_NOTEQUAL		3
 #define SEARCH_LESSEQUAL	4
 
+//Task_struct -> nsproxy -> ipc_ns-> ids[3]
+//#define IPC_SEM_IDS    0
+//#define IPC_MSG_IDS    1
+//#define IPC_SHM_IDS    2
 #define msg_ids(ns)	((ns)->ids[IPC_MSG_IDS])
 
 #define msg_unlock(msq)		ipc_unlock(&(msq)->q_perm)
@@ -177,10 +196,13 @@ static inline void msg_rmid(struct ipc_namespace *ns, struct msg_queue *s)
  *
  * Called with msg_ids.rw_mutex held (writer)
  */
+ //创建一个新的msg_queue
 static int newque(struct ipc_namespace *ns, struct ipc_params *params)
 {
 	struct msg_queue *msq;
 	int id, retval;
+	
+	//获取参数
 	key_t key = params->key;
 	int msgflg = params->flg;
 
@@ -309,21 +331,32 @@ static inline int msg_security(struct kern_ipc_perm *ipcp, int msgflg)
 	return security_msg_queue_associate(msq, msgflg);
 }
 
+//系统调用，消息队列的获取或创建
 SYSCALL_DEFINE2(msgget, key_t, key, int, msgflg)
 {
 	struct ipc_namespace *ns;
 	struct ipc_ops msg_ops;
 	struct ipc_params msg_params;
 
+	//当前进程的命名空间，current是当前进程的task_struct
 	ns = current->nsproxy->ipc_ns;
 
+	//注册接口函数
 	msg_ops.getnew = newque;
 	msg_ops.associate = msg_security;
 	msg_ops.more_checks = NULL;
 
+	//保存用户传递的ipc参数
+	/*
+   	  选择IPC关键字，可以使用如下三种方式:
+       a)IPC_PRIVATE。由内核负责选择一个关键字然后生成一个IPC对象并把IPC标识符直接传递给另一个进程。
+       b)直接选择一个关键字。
+       c)使用ftok()函数生成一个关键字
+	*/
+	
 	msg_params.key = key;
 	msg_params.flg = msgflg;
-
+	//调用ipcget函数，ipc模块统一处理
 	return ipcget(ns, &msg_ids(ns), &msg_ops, &msg_params);
 }
 
@@ -597,32 +630,44 @@ static int testmsg(struct msg_msg *msg, long type, int mode)
 	return 0;
 }
 
+//发送消息时会调用，条件是在发送进程进行发送的时候恰巧接收进程同时也准备好接收了
 static inline int pipelined_send(struct msg_queue *msq, struct msg_msg *msg)
 {
 	struct list_head *tmp;
-
+	
+	//轮询每一个receiver队列中的receiver
 	tmp = msq->q_receivers.next;
 	while (tmp != &msq->q_receivers) {
 		struct msg_receiver *msr;
-
+		
+		//获取msg_receiver队列的地址
 		msr = list_entry(tmp, struct msg_receiver, r_list);
 		tmp = tmp->next;
+		//testmsg通过消息的type和mode等信息判断该消息是否是接收进程需要的消息
 		if (testmsg(msg, msr->r_msgtype, msr->r_mode) &&
 		    !security_msg_queue_msgrcv(msq, msg, msr->r_tsk,
 					       msr->r_msgtype, msr->r_mode)) {
-
+			//符合条件则取出该receiver 
 			list_del(&msr->r_list);
+			//消息太大放不下时会报错，算是消息接收失败
 			if (msr->r_maxsize < msg->m_ts) {
 				msr->r_msg = NULL;
 				wake_up_process(msr->r_tsk);
+				//多处理器相关，避免编译器优化代码 
 				smp_mb();
 				msr->r_msg = ERR_PTR(-E2BIG);
 			} else {
+				//成功取得消息  
 				msr->r_msg = NULL;
+				//msg_queue的一些变量设置  
+　　				//设置last receieved pid
 				msq->q_lrpid = task_pid_vnr(msr->r_tsk);
+				//设置last msgrcv time
 				msq->q_rtime = get_seconds();
+				//唤醒接收进程
 				wake_up_process(msr->r_tsk);
 				smp_mb();
+				//获取消息内容
 				msr->r_msg = msg;
 
 				return 1;

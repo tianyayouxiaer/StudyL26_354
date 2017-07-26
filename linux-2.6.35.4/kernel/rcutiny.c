@@ -225,6 +225,11 @@ static void __call_rcu(struct rcu_head *head,
  * period.  But since we have but one CPU, that would be after any
  * quiescent state.
  */
+ /*
+ 当修改对象时，RCU将通过函数call_rcu进行延迟更新。RCU IPC对象通过引用计数触发延迟更新函数call_rcu的调用。
+ 在对象修改前调用函数ipc_rcu_getref增加引用计数，修改后调用函数 ipc_rcu_putref将引用计数减1，当引用计数
+ 为0时，调用call_rcu进行延迟更新。
+ */
 void call_rcu(struct rcu_head *head, void (*func)(struct rcu_head *rcu))
 {
 	__call_rcu(head, func, &rcu_sched_ctrlblk);

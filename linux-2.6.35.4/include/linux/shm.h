@@ -13,6 +13,19 @@
  * SHMMAX, SHMMNI and SHMALL are upper limits are defaults which can
  * be increased by sysctl
  */
+ 
+/*
+说明：同一块共享内存在内核中至少有3个标识符
+
+1、IPC对象id（IPC对象是保存IPC信息的数据结构）
+
+2、进程虚拟内存中文件的inode，即每个进程中的共享内存也是以文件的方式存在的，但并不是显式的。
+   可以通过某个vm_area_struct->vm_file->f_dentry->d_inode->i_ino表示。
+   
+3、IPC对象的key。如果在shmget()中传入同一个key可以获取到同一块共享内存。
+但由于key是用户指定的，可能重复，而且也很少程序写之前会约定一个key，所以这种方法不是很常用。
+通常System V这种共享内存的方式是用于有父子关系的进程的。或者用ftok()函数用路径名来生成一个key。
+*/
 
 #define SHMMAX 0x2000000		 /* max shared seg size (bytes) */
 #define SHMMIN 1			 /* min shared seg size (bytes) */
@@ -29,15 +42,17 @@
 #endif
 
 /* Obsolete, used only for backwards compatibility and libc5 compiles */
+//每一个新创建的共享内存由一个shmid_ds数据结构表示，如果shmget成功创建了一块共享内存，则返回一个可以用于
+//引用该共享内存的shmid_ds数据结构标示符
 struct shmid_ds {
-	struct ipc_perm		shm_perm;	/* operation perms */
+	struct ipc_perm		shm_perm;	/* operation perms *///存取权限
 	int			shm_segsz;	/* size of segment (bytes) */
 	__kernel_time_t		shm_atime;	/* last attach time */
-	__kernel_time_t		shm_dtime;	/* last detach time */
+	__kernel_time_t		shm_dtime;	/* last detach time *///最后一次断开时间
 	__kernel_time_t		shm_ctime;	/* last change time */
-	__kernel_ipc_pid_t	shm_cpid;	/* pid of creator */
-	__kernel_ipc_pid_t	shm_lpid;	/* pid of last operator */
-	unsigned short		shm_nattch;	/* no. of current attaches */
+	__kernel_ipc_pid_t	shm_cpid;	/* pid of creator *///创建该共享内存的进程id
+	__kernel_ipc_pid_t	shm_lpid;	/* pid of last operator *///最后一个操作该共享内存的进程id
+	unsigned short		shm_nattch;	/* no. of current attaches *///连接该共享内存的进程数目
 	unsigned short 		shm_unused;	/* compatibility */
 	void 			*shm_unused2;	/* ditto - used by DIPC */
 	void			*shm_unused3;	/* unused */
@@ -83,17 +98,18 @@ struct shm_info {
 };
 
 #ifdef __KERNEL__
+//表示一块共享内存的数据结构
 struct shmid_kernel /* private to the kernel */
 {	
-	struct kern_ipc_perm	shm_perm;
-	struct file *		shm_file;
-	unsigned long		shm_nattch;
-	unsigned long		shm_segsz;
-	time_t			shm_atim;
-	time_t			shm_dtim;
-	time_t			shm_ctim;
-	pid_t			shm_cprid;
-	pid_t			shm_lprid;
+	struct kern_ipc_perm	shm_perm;// 权限，这个结构体中还有一些重要的内容，后面会提到
+	struct file *		shm_file; // 表示这块共享内存的内核文件，文件内容即共享内存的内容
+	unsigned long		shm_nattch;// 连接到这块共享内存的进程数
+	unsigned long		shm_segsz;// 大小，字节为单位
+	time_t			shm_atim;// 最后一次连接时间
+	time_t			shm_dtim;// 最后一次断开时间
+	time_t			shm_ctim;// 最后一次更改信息的时间
+	pid_t			shm_cprid;// 创建者进程id
+	pid_t			shm_lprid;// 最后操作者进程id
 	struct user_struct	*mlock_user;
 };
 

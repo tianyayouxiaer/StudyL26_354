@@ -93,18 +93,20 @@ static void free_ipc_ns(struct ipc_namespace *ns)
 	 * won't take the rw lock before blocking_notifier_call_chain() has
 	 * released the rd lock.
 	 */
+	/*在开始处注销hotplug通知器可以保证在回调例程中不释放IPC命名空间对象。
+	因为通知器含有IPC对象读/写锁，读/写锁释放后，通知器才会释放对象*/
 	unregister_ipcns_notifier(ns);
 	sem_exit_ns(ns);
-	msg_exit_ns(ns);
-	shm_exit_ns(ns);
-	kfree(ns);
-	atomic_dec(&nr_ipc_ns);
+	msg_exit_ns(ns);/*释放信号量的IPC对象*/
+	shm_exit_ns(ns); /*释放消息队列的IPC对象*/
+	kfree(ns);/*释放共享内存的IPC对象*/
+	atomic_dec(&nr_ipc_ns); /*IPC命名空间对象引用计数减1*/
 
 	/*
 	 * Do the ipcns removal notification after decrementing nr_ipc_ns in
 	 * order to have a correct value when recomputing msgmni.
 	 */
-	ipcns_notify(IPCNS_REMOVED);
+	ipcns_notify(IPCNS_REMOVED);/*发出通知*/
 }
 
 /*

@@ -343,16 +343,20 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 	int id;
 	int acctflag = 0;
 
+	//size大小合法性检查
 	if (size < SHMMIN || size > ns->shm_ctlmax)
 		return -EINVAL;
 
+	//检查有没有足够pages
 	if (ns->shm_tot + numpages > ns->shm_ctlall)
 		return -ENOSPC;
 
+	//给共享内存/消息队列/信号量分配空间
 	shp = ipc_rcu_alloc(sizeof(*shp));
 	if (!shp)
 		return -ENOMEM;
 
+	//设置参数
 	shp->shm_perm.key = key;
 	shp->shm_perm.mode = (shmflg & S_IRWXUGO);
 	shp->mlock_user = NULL;
@@ -364,6 +368,7 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 		return error;
 	}
 
+	
 	sprintf (name, "SYSV%08x", key);
 	if (shmflg & SHM_HUGETLB) {
 		/* hugetlb_file_setup applies strict accounting */
@@ -445,12 +450,21 @@ static inline int shm_more_checks(struct kern_ipc_perm *ipcp,
 	return 0;
 }
 
+//用来获得共享内存区域的ID，如果不存在指定的共享区域就创建相应的区域
+//key是表示该共享内存对象的键值，size是该共享内存区域的大小（以字节为单位），shmflg是标志（对该共享内存对象的特殊要求）
+//成功：返回共享内存的标示符；否则返回-1，错误码粗放在errno中
+//如果key == IPC_PRIVATE，则总是会创建一个新的共享内存对象
 SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
 {
 	struct ipc_namespace *ns;
 	struct ipc_ops shm_ops;
 	struct ipc_params shm_params;
 
+	/*
+	共享内存这些进程间通信的数据结构是全局的，但有时候需要把他们隔离开，即某一组进程并不知道另外的进程的共享内存，
+	它们只希望在组内共用这些东西，这样就不会与其他进程冲突。于是就煞费苦心在内核中加了一个namespace。只要在clone()
+	函数中加入CLONE_NEWIPC标志就能创建一个新的IPC namespace。
+	*/
 	ns = current->nsproxy->ipc_ns;
 
 	shm_ops.getnew = newseg;
@@ -461,6 +475,8 @@ SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
 	shm_params.flg = shmflg;
 	shm_params.u.size = size;
 
+	//为了统一一个ipc的接口也是煞费苦心，共享内存、信号量、消息队列三种对象创建的时候都会调用这个函数，
+	//但其实创建的逻辑并不在这里。而在shm_ops中的三个函数里。
 	return ipcget(ns, &shm_ids(ns), &shm_ops, &shm_params);
 }
 

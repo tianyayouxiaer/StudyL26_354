@@ -103,10 +103,31 @@ enum hrtimer_restart {
  */
 struct hrtimer {
 	struct rb_node			node;
+	/*
+	设定了hrtimer的到期时间的一个范围，hrtimer可以在hrtimer._softexpires至timerqueue_node.expires之间的任何时刻到期，
+	我们也称timerqueue_node.expires为硬过期时间(hard)，意思很明显：到了此时刻，定时器一定会到期，有了这个范围可以选
+	择，定时器系统可以让范围接近的多个定时器在同一时刻同时到期，这种设计可以降低进程频繁地被hrtimer进行唤醒。
+	*/
 	ktime_t				_expires;//定时器的到期时间
 	ktime_t				_softexpires;
+	//定时器一旦到期，function字段指定的回调函数会被调用，该函数的返回值为一个枚举值，
+	//它决定了该hrtimer是否需要被重新激活
+	/*
+		hrtimer的到期时间可以基于以下几种时间基准系统：
+		HRTIMER_BASE_MONOTONIC,  // 单调递增的monotonic时间，不包含休眠时间	
+		HRTIMER_BASE_REALTIME,	 // 平常使用的墙上真实时间  
+		HRTIMER_BASE_BOOTTIME,	 // 单调递增的boottime，包含休眠时间  
+		HRTIMER_MAX_CLOCK_BASES, // 用于后续数组的定义  
+	*/
 	enum hrtimer_restart		(*function)(struct hrtimer *);
 	struct hrtimer_clock_base	*base;
+	//state字段用于表示hrtimer当前的状态
+	/*
+		#define HRTIMER_STATE_INACTIVE  0x00  // 定时器未激活  
+		#define HRTIMER_STATE_ENQUEUED  0x01  // 定时器已经被排入红黑树中  
+		#define HRTIMER_STATE_CALLBACK  0x02  // 定时器的回调函数正在被调用  
+		#define HRTIMER_STATE_MIGRATE   0x04  // 定时器正在CPU之间做迁移
+	*/
 	unsigned long			state;
 #ifdef CONFIG_TIMER_STATS
 	int				start_pid;
@@ -152,12 +173,12 @@ struct hrtimer_sleeper {
 //   hrtimer组织成红黑树的形式  
 struct hrtimer_clock_base {
 	struct hrtimer_cpu_base	*cpu_base;// 指向所属cpu的hrtimer_cpu_base结构
-	clockid_t		index;//用于区分CLOCK_MONOTONIC,CLOCK_REALTIME 
+	clockid_t		index;//用于区分CLOCK_MONOTONIC, CLOCK_REALTIME 
 	struct rb_root		active;// 红黑树，包含了所有使用该时间基准系统的hrtimer
 	struct rb_node		*first;//第一个到期的hrtimer 
 	ktime_t			resolution;// 时间基准系统的分辨率 
 	ktime_t			(*get_time)(void);// 获取该基准系统的时间函数
-	ktime_t			softirq_time; //第一个到期的hrtimer 
+	ktime_t			softirq_time; //当用jiffies
 #ifdef CONFIG_HIGH_RES_TIMERS
 	ktime_t			offset;//时钟相对于单调时钟的偏移  
 #endif
