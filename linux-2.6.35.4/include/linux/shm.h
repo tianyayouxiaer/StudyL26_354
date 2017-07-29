@@ -27,9 +27,12 @@
 通常System V这种共享内存的方式是用于有父子关系的进程的。或者用ftok()函数用路径名来生成一个key。
 */
 
+//共享段的最大字节数,32个字节
 #define SHMMAX 0x2000000		 /* max shared seg size (bytes) */
-#define SHMMIN 1			 /* min shared seg size (bytes) */
-#define SHMMNI 4096			 /* max num of segs system wide */
+//共享段最小字节数
+#define SHMMIN 1			 	/* min shared seg size (bytes) */
+//共享内存区域数
+#define SHMMNI 4096			   /* max num of segs system wide */
 #ifdef __KERNEL__
 #define SHMALL (SHMMAX/PAGE_SIZE*(SHMMNI/16)) /* max shm system wide (pages) */
 #else

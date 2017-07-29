@@ -57,14 +57,16 @@ struct msginfo {
  * Scaling factor to compute msgmni:
  * the memory dedicated to msg queues (msgmni * msgmnb) should occupy
  * at most 1/MSG_MEM_SCALE of the lowmem (see the formula in ipc/msg.c):
- * up to 8MB       : msgmni = 16 (MSGMNI)
- * 4 GB            : msgmni = 8K
+ * up to 8MB          : msgmni = 16 (MSGMNI)
+ * 4 GB         	  : msgmni = 8K
  * more than 16 GB : msgmni = 32K (IPCMNI)
  */
 #define MSG_MEM_SCALE 32
-
+//消息队列数
 #define MSGMNI    16   /* <= IPCMNI */     /* max # of msg queue identifiers */
+//消息的最大size，8KB
 #define MSGMAX  8192   /* <= INT_MAX */   /* max size of message (bytes) */
+//默认消息队列的最大大小16KB
 #define MSGMNB 16384   /* <= INT_MAX */   /* default max size of a message queue */
 
 /* unused */

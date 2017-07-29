@@ -27,6 +27,7 @@ DEFINE_SPINLOCK(mq_lock);
  * compiled when either CONFIG_SYSVIPC and CONFIG_POSIX_MQUEUE
  * and not CONFIG_IPC_NS.
  */
+ //ipc namespace的定义处
 struct ipc_namespace init_ipc_ns = {
 	.count		= ATOMIC_INIT(1),
 #ifdef CONFIG_POSIX_MQUEUE
@@ -122,7 +123,7 @@ out_err:
 	return ERR_PTR(err);
 }
 
-//接收消息时使用，主要逻辑类似load_msg
+//接收消息时使用，主要逻辑类似load_msg，从msg_msg中把数据拷出来
 int store_msg(void __user *dest, struct msg_msg *msg, int len)
 {
 	int alen;

@@ -15,7 +15,7 @@ struct ipc_perm
 	__kernel_uid_t	cuid;//创建者uid
 	__kernel_gid_t	cgid;//创建者组id
 	__kernel_mode_t	mode; //读写权限
-	unsigned short	seq;
+	unsigned short	seq;//存放用来计算该资源的ipc标示符所使用的位置使用序号
 };
 
 /* Include the definition of ipc64_perm */
@@ -81,6 +81,7 @@ struct ipc_kludge {
 #ifdef __KERNEL__
 #include <linux/spinlock.h>
 
+//系统中同时运行的最大msg_queue的个数
 #define IPCMNI 32768  /* <= MAX_INT limit for ipc arrays (including sysctl changes) */
 
 /* used by in-kernel data structures */

@@ -56,6 +56,7 @@ struct shm_file_data {
 static const struct file_operations shm_file_operations;
 static const struct vm_operations_struct shm_vm_ops;
 
+//从namespace结构中找到共享内存对应的ipc_ids数据机构
 #define shm_ids(ns)	((ns)->ids[IPC_SHM_IDS])
 
 #define shm_unlock(shp)			\
@@ -69,12 +70,14 @@ static void shm_destroy (struct ipc_namespace *ns, struct shmid_kernel *shp);
 static int sysvipc_shm_proc_show(struct seq_file *s, void *it);
 #endif
 
+//初始化ns中与共享内存相关的项
 void shm_init_ns(struct ipc_namespace *ns)
 {
 	ns->shm_ctlmax = SHMMAX;
 	ns->shm_ctlall = SHMALL;
 	ns->shm_ctlmni = SHMMNI;
 	ns->shm_tot = 0;
+	//初始化共享内存的ipc_ids结构
 	ipc_init_ids(&shm_ids(ns));
 }
 
@@ -104,8 +107,10 @@ void shm_exit_ns(struct ipc_namespace *ns)
 }
 #endif
 
+//共享内存模块初始化
 void __init shm_init (void)
 {
+	//在ipc_ns全局变量中初始化shm相关项，并初始化shm的ipc_ids
 	shm_init_ns(&init_ipc_ns);
 	ipc_init_proc_interface("sysvipc/shm",
 				"       key      shmid perms       size  cpid  lpid nattch   uid   gid  cuid  cgid      atime      dtime      ctime\n",
@@ -329,7 +334,7 @@ static const struct vm_operations_struct shm_vm_ops = {
  *
  * Called with shm_ids.rw_mutex held as a writer.
  */
-
+//根据传入的参数params来创建一块共享内存，并返回这块共享内存的标示符id
 static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 {
 	key_t key = params->key;
@@ -368,8 +373,10 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 		return error;
 	}
 
-	
+	//设置name
 	sprintf (name, "SYSV%08x", key);
+	
+	//为共享内存内容的file分配空间
 	if (shmflg & SHM_HUGETLB) {
 		/* hugetlb_file_setup applies strict accounting */
 		if (shmflg & SHM_NORESERVE)
@@ -384,18 +391,27 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 		if  ((shmflg & SHM_NORESERVE) &&
 				sysctl_overcommit_memory != OVERCOMMIT_NEVER)
 			acctflag = VM_NORESERVE;
+		//在tmpfs中创建一个文件
 		file = shmem_file_setup(name, size, acctflag);
 	}
 	error = PTR_ERR(file);
 	if (IS_ERR(file))
 		goto no_file;
 
+	/*
+	把刚才新建的这个共享内存的数据结构的指针加入到namespace的ids里，即可以想象成加入到数组里，
+	并获得一个可以找到它的id。这里的id并不完全是数组的下标，因为要避免重复，所以这里有一个简
+	单的机制来保证生成的id几乎是unique的，即ids里面有个seq变量，每次新加入共享内存对象时都会
+	加1，而真正的id是这样生成的SEQ_MULTIPLIER * seq + id。
+	*/
+	//在此处才生成ipc_id
 	id = ipc_addid(&shm_ids(ns), &shp->shm_perm, ns->shm_ctlmni);
 	if (id < 0) {
 		error = id;
 		goto no_id;
 	}
 
+	//然后初始化一些成员，再把这个数据结构的指针加到当前进程的一个list里
 	shp->shm_cprid = task_tgid_vnr(current);
 	shp->shm_lprid = 0;
 	shp->shm_atim = shp->shm_dtim = 0;
@@ -407,6 +423,7 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 	 * shmid gets reported as "inode#" in /proc/pid/maps.
 	 * proc-ps tools use this. Changing this will break them.
 	 */
+	 //文件和该共享内存结构关联起来了
 	file->f_dentry->d_inode->i_ino = shp->shm_perm.id;
 
 	ns->shm_tot += numpages;
@@ -648,6 +665,7 @@ out_up:
 	return err;
 }
 
+//共享内存管理
 SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
 {
 	struct shmid_kernel *shp;
@@ -823,6 +841,7 @@ out:
  * "raddr" thing points to kernel space, and there has to be a wrapper around
  * this.
  */
+ //通过id -> struct shmid_kernel -> file -> mamap
 long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 {
 	struct shmid_kernel *shp;
@@ -839,6 +858,7 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 	struct path path;
 	fmode_t f_mode;
 
+	//首先检查连接地址的合法性，页面对齐
 	err = -EINVAL;
 	if (shmid < 0)
 		goto out;
@@ -878,6 +898,7 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 	 * We cannot rely on the fs check since SYSV IPC does have an
 	 * additional creator id...
 	 */
+	//根据shared memory的id，在内核中查找相应的shmid_struct
 	ns = current->nsproxy->ipc_ns;
 	shp = shm_lock_check(ns, shmid);
 	if (IS_ERR(shp)) {
@@ -885,6 +906,7 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 		goto out;
 	}
 
+	//对访问者进行访问权限检查
 	err = -EACCES;
 	if (ipcperms(&shp->shm_perm, acc_mode))
 		goto out_unlock;
@@ -893,17 +915,21 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 	if (err)
 		goto out_unlock;
 
+	//获取文件表项
 	path = shp->shm_file->f_path;
 	path_get(&path);
-	shp->shm_nattch++;
-	size = i_size_read(path.dentry->d_inode);
+	shp->shm_nattch++;//  共享内存引用计数自增
+	size = i_size_read(path.dentry->d_inode);//通过i节点获取文件大小
 	shm_unlock(shp);
 
+	//分配相应的数据结构，并进行初始化
 	err = -ENOMEM;
+	//从slab分配其中分配shm_file_data数据结构
 	sfd = kzalloc(sizeof(*sfd), GFP_KERNEL);
 	if (!sfd)
 		goto out_put_dentry;
 
+	//分配一个struct file的数据结构
 	file = alloc_file(&path, f_mode,
 			  is_file_hugepages(shp->shm_file) ?
 				&shm_file_operations_huge :
@@ -911,6 +937,7 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 	if (!file)
 		goto out_free;
 
+	//初始化file
 	file->private_data = sfd;
 	file->f_mapping = shp->shm_file->f_mapping;
 	sfd->id = shp->shm_perm.id;
@@ -931,7 +958,7 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 		    addr > current->mm->start_stack - size - PAGE_SIZE * 5)
 			goto invalid;
 	}
-		
+	// 最后进行内存映射，完成attach操作	
 	user_addr = do_mmap (file, addr, size, prot, flags, 0);
 	*raddr = user_addr;
 	err = 0;
@@ -968,6 +995,9 @@ out_put_dentry:
 	goto out_nattch;
 }
 
+//以ipc标识符为shmid的共享内存连接到调用进程的虚拟地址空间，连接的地址，由参数shmaddr指定
+//shmid  - 共享内存标识符
+//用ipc找到共享内存，然后把共享内存映射到进程的线性地址空间中
 SYSCALL_DEFINE3(shmat, int, shmid, char __user *, shmaddr, int, shmflg)
 {
 	unsigned long ret;
@@ -984,6 +1014,7 @@ SYSCALL_DEFINE3(shmat, int, shmid, char __user *, shmaddr, int, shmflg)
  * detach and kill segment if marked destroyed.
  * The work is done in shm_close.
  */
+ //与shmat相反，从用进程地址空间中删除共享内存区域
 SYSCALL_DEFINE1(shmdt, char __user *, shmaddr)
 {
 	struct mm_struct *mm = current->mm;

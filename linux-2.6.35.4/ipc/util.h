@@ -144,6 +144,7 @@ extern int store_msg(void __user *dest, struct msg_msg *msg, int len);
 
 extern void recompute_msgmni(struct ipc_namespace *);
 
+//生成ipc_id的方法，参数id是struct kern_ipc_perm* 映射的的UID
 static inline int ipc_buildid(int id, int seq)
 {
 	return SEQ_MULTIPLIER * seq + id;

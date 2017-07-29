@@ -2681,6 +2681,8 @@ out:
  * @size: size to be set for the file
  * @flags: VM_NORESERVE suppresses pre-accounting of the entire object size
  */
+ //在tmpfs文件系统中创建内存文件
+ //参数：目录名，文件大小，创建标志
 struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags)
 {
 	int error;

@@ -129,9 +129,10 @@ void recompute_msgmni(struct ipc_namespace *ns)
 
 void msg_init_ns(struct ipc_namespace *ns)
 {
-	ns->msg_ctlmax = MSGMAX;
-	ns->msg_ctlmnb = MSGMNB;
+	ns->msg_ctlmax = MSGMAX;//默认8KB
+	ns->msg_ctlmnb = MSGMNB;//默认16348
 
+	//根据系统内存资源计算ns->msg_ctlmni
 	recompute_msgmni(ns);
 
 	atomic_set(&ns->msg_bytes, 0);
@@ -499,6 +500,7 @@ out_up:
 	return err;
 }
 
+//设置
 SYSCALL_DEFINE3(msgctl, int, msqid, int, cmd, struct msqid_ds __user *, buf)
 {
 	struct msg_queue *msq;
@@ -687,11 +689,13 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 
 	ns = current->nsproxy->ipc_ns;
 
+	//发送小小大小不能大于msg_ctlmax
 	if (msgsz > ns->msg_ctlmax || (long) msgsz < 0 || msqid < 0)
 		return -EINVAL;
 	if (mtype < 1)
 		return -EINVAL;
 
+	//把消息放到struct msg中，如果超高一页，则放到msg_msgseg中
 	msg = load_msg(mtext, msgsz);
 	if (IS_ERR(msg))
 		return PTR_ERR(msg);
@@ -699,6 +703,7 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 	msg->m_type = mtype;
 	msg->m_ts = msgsz;
 
+	//通过id找到消息队列
 	msq = msg_lock_check(ns, msqid);
 	if (IS_ERR(msq)) {
 		err = PTR_ERR(msq);
@@ -709,6 +714,7 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 		struct msg_sender s;
 
 		err = -EACCES;
+		//权限检查
 		if (ipcperms(&msq->q_perm, S_IWUGO))
 			goto out_unlock_free;
 
@@ -716,19 +722,24 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 		if (err)
 			goto out_unlock_free;
 
+		//队列上数据限制检查
 		if (msgsz + msq->q_cbytes <= msq->q_qbytes &&
 				1 + msq->q_qnum <= msq->q_qbytes) {
 			break;
 		}
 
+		//消息队列满了
 		/* queue full, wait: */
 		if (msgflg & IPC_NOWAIT) {
 			err = -EAGAIN;
 			goto out_unlock_free;
 		}
+
+		//在消息队列尾部添加发送节点
 		ss_add(msq, &s);
 		ipc_rcu_getref(msq);
 		msg_unlock(msq);
+		//cpu调度切换了
 		schedule();
 
 		ipc_lock_by_ptr(&msq->q_perm);
@@ -737,6 +748,8 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 			err = -EIDRM;
 			goto out_unlock_free;
 		}
+
+		//删除消息发送
 		ss_del(&s);
 
 		if (signal_pending(current)) {
@@ -745,11 +758,14 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 		}
 	}
 
+	//发送消息
 	msq->q_lspid = task_tgid_vnr(current);
 	msq->q_stime = get_seconds();
 
+	//可能此时已经有接收者准备接收该消息
 	if (!pipelined_send(msq, msg)) {
 		/* noone is waiting for this message, enqueue it */
+		//如果没有人接收该消息，则把发添加到发送队列上
 		list_add_tail(&msg->m_list, &msq->q_messages);
 		msq->q_cbytes += msgsz;
 		msq->q_qnum++;
@@ -768,6 +784,7 @@ out_free:
 	return err;
 }
 
+//向消息队列发送消息
 SYSCALL_DEFINE4(msgsnd, int, msqid, struct msgbuf __user *, msgp, size_t, msgsz,
 		int, msgflg)
 {
@@ -807,9 +824,11 @@ long do_msgrcv(int msqid, long *pmtype, void __user *mtext,
 
 	if (msqid < 0 || (long) msgsz < 0)
 		return -EINVAL;
+	
 	mode = convert_mode(&msgtyp, msgflg);
 	ns = current->nsproxy->ipc_ns;
 
+	//根据id找到消息队列
 	msq = msg_lock_check(ns, msqid);
 	if (IS_ERR(msq))
 		return PTR_ERR(msq);
@@ -949,6 +968,7 @@ out_unlock:
 	return msgsz;
 }
 
+//消息接收
 SYSCALL_DEFINE5(msgrcv, int, msqid, struct msgbuf __user *, msgp, size_t, msgsz,
 		long, msgtyp, int, msgflg)
 {

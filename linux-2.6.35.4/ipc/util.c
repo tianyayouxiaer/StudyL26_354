@@ -118,8 +118,10 @@ __initcall(ipc_init);
  
 void ipc_init_ids(struct ipc_ids *ids)
 {
+	//初始化读写锁
 	init_rwsem(&ids->rw_mutex);
 
+	//初始化ids中的状态变量
 	ids->in_use = 0;
 	ids->seq = 0;
 	{
@@ -130,6 +132,7 @@ void ipc_init_ids(struct ipc_ids *ids)
 		 	ids->seq_max = seq_limit;
 	}
 
+	//初始化idr结构体
 	idr_init(&ids->ipcs_idr);
 }
 
@@ -301,6 +304,7 @@ static int ipcget_new(struct ipc_namespace *ns, struct ipc_ids *ids,
 {
 	int err;
 retry:
+
 	err = idr_pre_get(&ids->ipcs_idr, GFP_KERNEL);
 
 	if (!err)
@@ -375,6 +379,7 @@ retry:
 	 * a new entry + read locks are not "upgradable"
 	 */
 	down_write(&ids->rw_mutex);
+	//
 	ipcp = ipc_findkey(ids, params->key);//是否已经存在键值相同的IPCP
 	//不存在
 	if (ipcp == NULL) {
@@ -647,7 +652,8 @@ void ipc_rcu_putref(void *ptr)
  *	Check user, group, other permissions for access
  *	to ipc resources. return 0 if allowed
  */
- 
+
+ //检查ipc权限
 int ipcperms (struct kern_ipc_perm *ipcp, short flag)
 {	/* flag will most probably be 0 or S_...UGO from <linux/stat.h> */
 	uid_t euid = current_euid();

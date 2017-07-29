@@ -49,7 +49,7 @@ struct ipc_ids {
 	unsigned short seq;//下一个分配位置使用序号
 	unsigned short seq_max;//最大位置使用序号
 	struct rw_semaphore rw_mutex;//保护ipc_ids数据结构信号量
-	struct idr ipcs_idr;/*通过IDR机制将ID与结构kern_ipc_perm类型指针建立关联*/
+	struct idr ipcs_idr;	/*通过IDR机制将ID与结构kern_ipc_perm类型指针建立关联*/
 };
 
 /*
@@ -86,21 +86,21 @@ PID namespace使属于不同的名字空间的进程可以拥有相同的进程�
 
 struct ipc_namespace {
 	atomic_t	count;
-	struct ipc_ids	ids[3];
 	//分别对应信号量、消息队列和共享内存的ID集
+	struct ipc_ids	ids[3];
 	int		sem_ctls[4];
 	int		used_sems;
 
-	int		msg_ctlmax;
-	int		msg_ctlmnb;
-	int		msg_ctlmni;
+	int		msg_ctlmax;//单个消息的最大值，默认为8KB
+	int		msg_ctlmnb;//消息队列中全部消息的大小 默认为16KB
+	int		msg_ctlmni;//消息队列数 默认为16
 	atomic_t	msg_bytes;
 	atomic_t	msg_hdrs;
 	int		auto_msgmni;
 
-	size_t		shm_ctlmax;
-	size_t		shm_ctlall;
-	int		shm_ctlmni;
+	size_t		shm_ctlmax;//单个共享内存最大值，默认32MB
+	size_t		shm_ctlall;//所有共享段最大值，默认为8GB
+	int		shm_ctlmni;//共享内存数 默认为4096
 	int		shm_tot;
 
 	struct notifier_block ipcns_nb;
