@@ -15,6 +15,7 @@
  * This is only for internal list manipulation where we know
  * the prev/next entries already!
  */
+ //插入一个节点
 static inline void __list_add_rcu(struct list_head *new,
 		struct list_head *prev, struct list_head *next)
 {
@@ -40,6 +41,7 @@ static inline void __list_add_rcu(struct list_head *new,
  * the _rcu list-traversal primitives, such as
  * list_for_each_entry_rcu().
  */
+//
 static inline void list_add_rcu(struct list_head *new, struct list_head *head)
 {
 	__list_add_rcu(new, head, head->next);
@@ -243,7 +245,6 @@ static inline void list_splice_init_rcu(struct list_head *list,
 	for (pos = list_entry_rcu((head)->next, typeof(*pos), member); \
 		prefetch(pos->member.next), &pos->member != (head); \
 		pos = list_entry_rcu(pos->member.next, typeof(*pos), member))
-
 
 /**
  * list_for_each_continue_rcu

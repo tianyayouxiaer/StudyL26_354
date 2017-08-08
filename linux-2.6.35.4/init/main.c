@@ -625,6 +625,7 @@ asmlinkage void __init start_kernel(void)
 				"enabled *very* early, fixing it\n");
 		local_irq_disable();
 	}
+	//初始化rcu
 	rcu_init();
 	radix_tree_init();
 	/* init some links before init_ISA_irqs() */

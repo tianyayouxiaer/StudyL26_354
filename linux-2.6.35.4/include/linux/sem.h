@@ -36,9 +36,9 @@ struct semid_ds {
 
 /* semop system calls takes an array of these. */
 struct sembuf {
-	unsigned short  sem_num;	/* semaphore index in array */
-	short		sem_op;		/* semaphore operation */
-	short		sem_flg;	/* operation flags */
+	unsigned short  sem_num;	/* semaphore index in array *///信号灯编号，从0开始
+	short		sem_op;		/* semaphore operation *///正 - 释放信号量，负 - 释放信号量
+	short		sem_flg;	/* operation flags */ //操作的标识
 };
 
 /* arg for semctl system calls. */
@@ -63,7 +63,9 @@ struct  seminfo {
 	int semaem;
 };
 
+//IPC信号量资源的个数
 #define SEMMNI  128             /* <= IPCMNI  max # of semaphore identifiers */
+//单个IPC资源内原始信号量的个数
 #define SEMMSL  250             /* <= 8 000 max num of semaphores per id */
 #define SEMMNS  (SEMMNI*SEMMSL) /* <= INT_MAX max # of semaphores in system */
 #define SEMOPM  32	        /* <= 1 000 max num of ops per semop call */
@@ -84,31 +86,34 @@ struct  seminfo {
 struct task_struct;
 
 /* One semaphore structure for each semaphore in the system. */
+//信号量结构
 struct sem {
-	int	semval;		/* current value */
-	int	sempid;		/* pid of last operation */
-	struct list_head sem_pending; /* pending single-sop operations */
+	int	semval;		/* current value *///信号量的计数值
+	int	sempid;		/* pid of last operation *///最后一个访问信号量的进程的pid
+	struct list_head sem_pending; /* pending single-sop operations *///挂起在该信号量上的进程
 };
 
 /* One sem_array data structure for each set of semaphores in the system. */
+//信号量集合，每一个元素对应一个IPC信号资源
 struct sem_array {
 	struct kern_ipc_perm	____cacheline_aligned_in_smp
 				sem_perm;	/* permissions .. see ipc.h */
 	time_t			sem_otime;	/* last semop time */
 	time_t			sem_ctime;	/* last change time */
-	struct sem		*sem_base;	/* ptr to first semaphore in array */
-	struct list_head	sem_pending;	/* pending operations to be processed */
-	struct list_head	list_id;	/* undo requests on this array */
-	int			sem_nsems;	/* no. of semaphores in array */
+	struct sem		*sem_base;	/* ptr to first semaphore in array *///指向信号集合中第一个信号
+	struct list_head	sem_pending;	/* pending operations to be processed *///挂起操作
+	struct list_head	list_id;	/* undo requests on this array *//
+	int			sem_nsems;	/* no. of semaphores in array *///信号集合中信号量个数
 	int			complex_count;	/* pending complex operations */
 };
 
 /* One queue for each sleeping process in the system. */
+//挂起队列
 struct sem_queue {
 	struct list_head	simple_list; /* queue of pending operations */
 	struct list_head	list;	 /* queue of pending operations */
 	struct task_struct	*sleeper; /* this process */
-	struct sem_undo		*undo;	 /* undo structure */
+	struct sem_undo		*undo;	 /* undo structure */ //可取消信号量操作
 	int    			pid;	 /* process id of requesting process */
 	int    			status;	 /* completion status of operation */
 	struct sembuf		*sops;	 /* array of pending operations */
@@ -119,14 +124,22 @@ struct sem_queue {
 /* Each task has a list of undo requests. They are executed automatically
  * when the process exits.
  */
+ //每一个任务都有一个取消的请求，进程退出时他们将自动执行
+ 
+ /*
+ 当操作信号量(semop)时，sem_flg可以设置SEM_UNDO标识；SEM_UNDO用于将修改的信号量值在进
+ 程正常退出（调用exit退出或main执行完）或异常退出（如段异常、除0异常、收到KILL信号等）时归还给信号量。
+ 如信号量初始值是20，进程以SEM_UNDO方式操作信号量减2，减5，加1；在进程未退出时，信号量变成20-2-5+1=14；
+ 在进程退出时，将修改的值归还给信号量，信号量变成14+2+5-1=20。
+ */
 struct sem_undo {
-	struct list_head	list_proc;	/* per-process list: all undos from one process. */
+	struct list_head	list_proc;	/* per-process list: all undos from one process. *//
 						/* rcu protected */
 	struct rcu_head		rcu;		/* rcu struct for sem_undo() */
-	struct sem_undo_list	*ulp;		/* sem_undo_list for the process */
-	struct list_head	list_id;	/* per semaphore array list: all undos for one array */
-	int			semid;		/* semaphore set identifier */
-	short *			semadj;		/* array of adjustments, one per semaphore */
+	struct sem_undo_list	*ulp;		/* sem_undo_list for the process *///进程undos
+	struct list_head	list_id;	/* per semaphore array list: all undos for one array *///信号量集合的undos
+	int			semid;		/* semaphore set identifier */ //信号量集合的标示
+	short *			semadj;		/* array of adjustments, one per semaphore *///信号集合的调整，每一个信号量集合一个
 };
 
 /* sem_undo_list controls shared access to the list of sem_undo structures

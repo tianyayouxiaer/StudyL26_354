@@ -45,6 +45,31 @@
 extern int rcutorture_runnable; /* for sysctl */
 #endif /* #ifdef CONFIG_RCU_TORTURE_TEST */
 
+/*
+	http://blog.sina.com.cn/s/blog_6d7fa49b01014q9s.html
+	http://blog.csdn.net/nevil/article/details/7718375
+	
+	RCU 是READCOPY UPDATE的简写，设计思想的来源是，对读写锁进行优化，减少写者之间的同步，
+	即如果同时有几个写者进行竞争，那么写者就对资源进行拷贝，从而允许多个写者对资源进行修改，
+	最后由系统决定什么时候更新。
+
+
+	首先我们从概念上理解下什么叫RCU，其中读(Read)：读者不需要获得任何锁就可访问RCU保护的临界区；
+	拷贝(Copy)：写者在访问临界区时，写者“自己”将先拷贝一个临界区副本，然后对副本进行修改；
+	更新(Update)：RCU机制将在在适当时机使用一个回调函数把指向原来临界区的指针重新指向新的被修改的临界区，
+	锁机制中的垃圾收集器负责回调函数的调用。总结即是读-拷贝-更新
+	
+	这个时机是：所有引用该共享临界区的CPU都退出对临界区的操作。即没有CPU再去操作这段临界区后，
+	这段临界区即可回收了，此时回调函数即被调用。
+
+	RCU是一种机制，它允许读写并发执行，对于读者来说，读者间没有任何同步开销，因为可随时读取临界区，
+	和其他读者没有相互影响；但对于不同的写者来说，它们之间如果存在同步开销，则写者间的同步开销则取
+	决于写者间的采用同步机制，和RCU并没有直接的关系。
+
+	RCU允许多个读者同时访问被保护的数据，也允许多个读者在有写者时访问被保护的数据（但是注意：
+	是否可以有多个写者并行访问取决于写者之间使用的同步机制）。
+*/
+
 /**
  * struct rcu_head - callback structure for use with RCU
  * @next: next update requests in a list
@@ -52,7 +77,7 @@ extern int rcutorture_runnable; /* for sysctl */
  */
 struct rcu_head {
 	struct rcu_head *next;
-	void (*func)(struct rcu_head *head);
+	void (*func)(struct rcu_head *head);//回调函数
 };
 
 /* Exported common interfaces */
@@ -307,9 +332,14 @@ extern int rcu_my_thread_group_empty(void);
  *
  * It is illegal to block while in an RCU read-side critical section.
  */
+ //rcu_read_lock()和rcu_read_unlock()用来保持一个读者的RCU临界区.在该临界区内不允许发生上下文切换。
+ //为什么不能发生切换呢？因为内核要根据“是否发生过切换”来判断读者是否已结束读操作
+ 
+ //读者函数
 static inline void rcu_read_lock(void)
 {
 	__rcu_read_lock();
+	//以下两个函数是选择编译函数，可以忽略不看
 	__acquire(RCU);
 	rcu_read_acquire();
 }
@@ -329,9 +359,11 @@ static inline void rcu_read_lock(void)
  *
  * See rcu_read_lock() for more information.
  */
+ //读解锁
 static inline void rcu_read_unlock(void)
 {
 	rcu_read_release();
+	//以下两个函数是选择编译函数，可以忽略不看
 	__release(RCU);
 	__rcu_read_unlock();
 }
@@ -347,6 +379,7 @@ static inline void rcu_read_unlock(void)
  * can use just rcu_read_lock().
  *
  */
+ //禁止中断下半部
 static inline void rcu_read_lock_bh(void)
 {
 	__rcu_read_lock_bh();
@@ -359,6 +392,7 @@ static inline void rcu_read_lock_bh(void)
  *
  * See rcu_read_lock_bh() for more information.
  */
+ //使能中断下半部
 static inline void rcu_read_unlock_bh(void)
 {
 	rcu_read_release_bh();
@@ -433,6 +467,8 @@ static inline notrace void rcu_read_unlock_sched_notrace(void)
  *
  * Makes rcu_dereference_check() do the dirty work.
  */
+ //读者调用它来获得一个被RCU保护的指针
+// 为了cache一致性，插上了内存屏障。可以让其它的读者/写者可以看到保护指针的最新值.
 #define rcu_dereference(p) \
 	rcu_dereference_check(p, rcu_read_lock_held())
 
@@ -465,6 +501,8 @@ static inline notrace void rcu_read_unlock_sched_notrace(void)
  * code.
  */
 
+//写者使用该函数来为被RCU保护的指针分配一个新的值
+//强制编译器和CPU在给v的各个域赋值之后再把指针赋值给p
 #define rcu_assign_pointer(p, v) \
 	({ \
 		if (!__builtin_constant_p(v) || \
@@ -475,6 +513,7 @@ static inline notrace void rcu_read_unlock_sched_notrace(void)
 
 /* Infrastructure to implement the synchronize_() primitives. */
 
+//rcu核心数据结构，挂起写者，等待读者都退出后释放老的数据
 struct rcu_synchronize {
 	struct rcu_head head;
 	struct completion completion;
@@ -493,7 +532,7 @@ extern void wakeme_after_rcu(struct rcu_head  *head);
  * sections are delimited by rcu_read_lock() and rcu_read_unlock(),
  * and may be nested.
  */
-extern void call_rcu(struct rcu_head *head,
+extern void /(struct rcu_head *head,
 			      void (*func)(struct rcu_head *head));
 
 /**

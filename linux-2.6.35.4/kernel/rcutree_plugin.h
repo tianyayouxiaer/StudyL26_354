@@ -550,6 +550,7 @@ EXPORT_SYMBOL_GPL(call_rcu);
  * sections are delimited by rcu_read_lock() and rcu_read_unlock(),
  * and may be nested.
  */
+ //synchronize_rcu()在RCU中是一个最核心的函数,它用来等待之前的读者全部退出
 void synchronize_rcu(void)
 {
 	struct rcu_synchronize rcu;
@@ -559,8 +560,10 @@ void synchronize_rcu(void)
 
 	init_rcu_head_on_stack(&rcu.head);
 	init_completion(&rcu.completion);
+	//调用call_rcu后，一直等待条件变量的满足
 	/* Will wake me after RCU finished. */
 	call_rcu(&rcu.head, wakeme_after_rcu);
+	
 	/* Wait for it. */
 	wait_for_completion(&rcu.completion);
 	destroy_rcu_head_on_stack(&rcu.head);

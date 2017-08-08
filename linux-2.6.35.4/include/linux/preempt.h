@@ -27,6 +27,7 @@
 
 asmlinkage void preempt_schedule(void);
 
+//关闭抢占
 #define preempt_disable() \
 do { \
 	inc_preempt_count(); \
@@ -45,6 +46,7 @@ do { \
 		preempt_schedule(); \
 } while (0)
 
+//打开抢占
 #define preempt_enable() \
 do { \
 	preempt_enable_no_resched(); \

@@ -2351,6 +2351,7 @@ void __init vfs_caches_init_early(void)
 	inode_init_early();
 }
 
+//
 void __init vfs_caches_init(unsigned long mempages)
 {
 	unsigned long reserve;
@@ -2363,10 +2364,12 @@ void __init vfs_caches_init(unsigned long mempages)
 
 	names_cachep = kmem_cache_create("names_cache", PATH_MAX, 0,
 			SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
-
+	//建立并初始化目录hash表dentry_hashtable和索引节点hash表inode_hashtable
+	//linux使用哈希表存储目录和索引节点，以提高目录和索引节点的查找效率；dentry_hashtable是目录哈希表，inode_hashtable是索引节点哈希表。
 	dcache_init();
 	inode_init();
 	files_init(mempages);
+	//完成sysfs和rootfs文件系统的注册和挂载
 	mnt_init();
 	bdev_cache_init();
 	chrdev_init();

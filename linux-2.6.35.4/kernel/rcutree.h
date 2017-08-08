@@ -159,6 +159,14 @@ struct rcu_node {
 #define RCU_NEXT_SIZE		4
 
 /* Per-CPU data for read-copy update. */
+
+/*
+每一个CPU都有一个rcu_data.每个调用call_rcu()/synchronize_rcu()进程的进程都会将一个rcu_head
+都会挂到rcu_data的nxttail链表上（这个rcu_head其实就相当于这个进程在RCU机制中的体现），然后
+挂起。当读者都完成读操作后（经过一个grace period后）就会触发这个rcu_head上的回调函数来唤醒写者
+*/
+
+//跟踪单个cpu的rcu事物
 struct rcu_data {
 	/* 1) quiescent-state and grace-period handling : */
 	unsigned long	completed;	/* Track rsp->completed gp number */
@@ -167,6 +175,7 @@ struct rcu_data {
 					/*  is aware of having started. */
 	unsigned long	passed_quiesc_completed;
 					/* Value of completed at time of qs. */
+	//表示当前cpu是否已经切换过进程，进程切换会把此标志置为1，在写者被加入到等待队列置为0
 	bool		passed_quiesc;	/* User-mode/idle loop etc. */
 	bool		qs_pending;	/* Core waits for quiesc state. */
 	bool		beenonline;	/* CPU online at least once. */
@@ -197,7 +206,7 @@ struct rcu_data {
 	 *	Note that the value of *nxttail[RCU_NEXT_TAIL] will
 	 *	always be NULL, as this is the end of the list.
 	 */
-	struct rcu_head *nxtlist;
+	struct rcu_head *nxtlist;//这个链表代表需要提交给rcu处理的回调；
 	struct rcu_head **nxttail[RCU_NEXT_SIZE];
 	long		qlen;		/* # of queued callbacks */
 	long		qlen_last_fqs_check;

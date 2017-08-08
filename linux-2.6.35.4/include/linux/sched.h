@@ -1308,7 +1308,7 @@ struct task_struct {
 /* file system info */
 	int link_count, total_link_count;
 #ifdef CONFIG_SYSVIPC
-/* ipc stuff */
+/* ipc stuff *///对于每个进程，都记录了可取消操作处理的所有信号资源，如果该进程意外退出，就会回滚该进程拥有的信号量
 	struct sysv_sem sysvsem;
 #endif
 #ifdef CONFIG_DETECT_HUNG_TASK

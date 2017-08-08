@@ -120,10 +120,10 @@ static int sysvipc_sem_proc_show(struct seq_file *s, void *it);
 
 void sem_init_ns(struct ipc_namespace *ns)
 {
-	ns->sc_semmsl = SEMMSL;
-	ns->sc_semmns = SEMMNS;
+	ns->sc_semmsl = SEMMSL;//单个IPC资源内原始信号量的个数
+	ns->sc_semmns = SEMMNS;//最大信号量个数
 	ns->sc_semopm = SEMOPM;
-	ns->sc_semmni = SEMMNI;
+	ns->sc_semmni = SEMMNI;//IPC信号量资源的个数
 	ns->used_sems = 0;
 	ipc_init_ids(&ns->ids[IPC_SEM_IDS]);
 }
@@ -237,7 +237,7 @@ static inline void sem_rmid(struct ipc_namespace *ns, struct sem_array *s)
  *
  * Called with sem_ids.rw_mutex held (as a writer)
  */
-
+//创建一个新的信号量集合
 static int newary(struct ipc_namespace *ns, struct ipc_params *params)
 {
 	int id;
@@ -249,11 +249,12 @@ static int newary(struct ipc_namespace *ns, struct ipc_params *params)
 	int semflg = params->flg;
 	int i;
 
+	//要创建信号灯集合中信号灯个数检查   0<nsems< ns->sc_semmns - ns->used_sems
 	if (!nsems)
 		return -EINVAL;
 	if (ns->used_sems + nsems > ns->sc_semmns)
 		return -ENOSPC;
-
+	
 	size = sizeof (*sma) + nsems * sizeof (struct sem);
 	sma = ipc_rcu_alloc(size);
 	if (!sma) {
@@ -271,6 +272,7 @@ static int newary(struct ipc_namespace *ns, struct ipc_params *params)
 		return retval;
 	}
 
+	//映射idr
 	id = ipc_addid(&sem_ids(ns), &sma->sem_perm, ns->sc_semmni);
 	if (id < 0) {
 		security_sem_free(sma);
@@ -279,14 +281,19 @@ static int newary(struct ipc_namespace *ns, struct ipc_params *params)
 	}
 	ns->used_sems += nsems;
 
+	//指向型号量集合中第一个信号，这个地方说明sem信号量是紧挨着sma的。
 	sma->sem_base = (struct sem *) &sma[1];
 
+	//初始化每个信号量的进程挂起队列
 	for (i = 0; i < nsems; i++)
 		INIT_LIST_HEAD(&sma->sem_base[i].sem_pending);
 
 	sma->complex_count = 0;
+	//初始化信号
 	INIT_LIST_HEAD(&sma->sem_pending);
+	//取消操作队列
 	INIT_LIST_HEAD(&sma->list_id);
+	//设置信号量集合中信号个数
 	sma->sem_nsems = nsems;
 	sma->sem_ctime = get_seconds();
 	sem_unlock(sma);
@@ -321,6 +328,9 @@ static inline int sem_more_checks(struct kern_ipc_perm *ipcp,
 	return 0;
 }
 
+//创建与打开信号灯集
+//nsems：创建信号灯集中信号灯的个数
+//semflg:操作类型和访问权限
 SYSCALL_DEFINE3(semget, key_t, key, int, nsems, int, semflg)
 {
 	struct ipc_namespace *ns;
@@ -347,7 +357,6 @@ SYSCALL_DEFINE3(semget, key_t, key, int, nsems, int, semflg)
  * Determine whether a sequence of semaphore operations would succeed
  * all at once. Return 0 if yes, 1 if need to sleep, else return error code.
  */
-
 static int try_atomic_semop (struct sem_array * sma, struct sembuf * sops,
 			     int nsops, struct sem_undo *un, int pid)
 {
@@ -1132,6 +1141,7 @@ SYSCALL_ALIAS(sys_semctl, SyS_semctl);
  *
  * This can block, so callers must hold no locks.
  */
+//如果当前线程没有undo_list,则给它分配一个；如果有，就不用分配，确保一个进程只有一个undo_list
 static inline int get_undo_list(struct sem_undo_list **undo_listp)
 {
 	struct sem_undo_list *undo_list;
@@ -1187,6 +1197,7 @@ static struct sem_undo *lookup_undo(struct sem_undo_list *ulp, int semid)
  * Lifetime-rules: sem_undo is rcu-protected, on success, the function
  * performs a rcu_read_lock().
  */
+
 static struct sem_undo *find_alloc_undo(struct ipc_namespace *ns, int semid)
 {
 	struct sem_array *sma;
@@ -1195,12 +1206,14 @@ static struct sem_undo *find_alloc_undo(struct ipc_namespace *ns, int semid)
 	int nsems;
 	int error;
 
+	//获取该进程的undo_list,如果就给该进程分配一个
 	error = get_undo_list(&ulp);
 	if (error)
 		return ERR_PTR(error);
 
 	rcu_read_lock();
 	spin_lock(&ulp->lock);
+	//在进程的undo_list上搜寻和该smid匹配的sem_undo
 	un = lookup_undo(ulp, semid);
 	spin_unlock(&ulp->lock);
 	if (likely(un!=NULL))
@@ -1209,6 +1222,7 @@ static struct sem_undo *find_alloc_undo(struct ipc_namespace *ns, int semid)
 
 	/* no undo structure around - allocate one. */
 	/* step 1: figure out the size of the semaphore array */
+	//通过semid查找与之对应的信号量集合
 	sma = sem_lock_check(ns, semid);
 	if (IS_ERR(sma))
 		return ERR_CAST(sma);
@@ -1241,11 +1255,13 @@ static struct sem_undo *find_alloc_undo(struct ipc_namespace *ns, int semid)
 		kfree(new);
 		goto success;
 	}
+	
 	/* step 5: initialize & link new undo structure */
 	new->semadj = (short *) &new[1];
 	new->ulp = ulp;
 	new->semid = semid;
 	assert_spin_locked(&ulp->lock);
+	
 	list_add_rcu(&new->list_proc, &ulp->list_proc);
 	assert_spin_locked(&sma->sem_perm.lock);
 	list_add(&new->list_id, &sma->list_id);
@@ -1286,6 +1302,9 @@ static int get_queue_result(struct sem_queue *q)
 }
 
 
+//信号量操作
+//tsops - 待操作的信号量集合，包含了对于型号量集合的操作方法信息
+//nsops - 要操作信号灯数
 SYSCALL_DEFINE4(semtimedop, int, semid, struct sembuf __user *, tsops,
 		unsigned, nsops, const struct timespec __user *, timeout)
 {
@@ -1302,6 +1321,7 @@ SYSCALL_DEFINE4(semtimedop, int, semid, struct sembuf __user *, tsops,
 
 	ns = current->nsproxy->ipc_ns;
 
+	//操作的信号量个数要大于1，小于信号量集合中的信号个数， 信号量id要大于1
 	if (nsops < 1 || semid < 0)
 		return -EINVAL;
 	if (nsops > ns->sc_semopm)
@@ -1311,10 +1331,14 @@ SYSCALL_DEFINE4(semtimedop, int, semid, struct sembuf __user *, tsops,
 		if(sops==NULL)
 			return -ENOMEM;
 	}
+
+	//对集合中信号中信号的操作方法，要操作的信号每个都有一个操作方法
 	if (copy_from_user (sops, tsops, nsops * sizeof(*tsops))) {
 		error=-EFAULT;
 		goto out_free;
 	}
+
+	//超时参数
 	if (timeout) {
 		struct timespec _timeout;
 		if (copy_from_user(&_timeout, timeout, sizeof(*timeout))) {
@@ -1326,18 +1350,25 @@ SYSCALL_DEFINE4(semtimedop, int, semid, struct sembuf __user *, tsops,
 			error = -EINVAL;
 			goto out_free;
 		}
+
+		//将_timeout转换成_timeout
 		jiffies_left = timespec_to_jiffies(&_timeout);
 	}
+
+	//根据传入参数，获取状态参数
 	max = 0;
 	for (sop = sops; sop < sops + nsops; sop++) {
 		if (sop->sem_num >= max)
 			max = sop->sem_num;
 		if (sop->sem_flg & SEM_UNDO)
 			undos = 1;
+			
+		//信号量操作，正 - V 操作 - 释放信号量，负 - P操作 - 获取信号量
 		if (sop->sem_op != 0)
 			alter = 1;
 	}
 
+	//有undos标志，在进程undo链表上找到与semid匹配的undos
 	if (undos) {
 		un = find_alloc_undo(ns, semid);
 		if (IS_ERR(un)) {
@@ -1349,6 +1380,7 @@ SYSCALL_DEFINE4(semtimedop, int, semid, struct sembuf __user *, tsops,
 
 	INIT_LIST_HEAD(&tasks);
 
+	//通过semid找到信号量集合
 	sma = sem_lock_check(ns, semid);
 	if (IS_ERR(sma)) {
 		if (un)
@@ -1386,6 +1418,7 @@ SYSCALL_DEFINE4(semtimedop, int, semid, struct sembuf __user *, tsops,
 	if (max >= sma->sem_nsems)
 		goto out_unlock_free;
 
+	//参数检查
 	error = -EACCES;
 	if (ipcperms(&sma->sem_perm, alter ? S_IWUGO : S_IRUGO))
 		goto out_unlock_free;
@@ -1394,6 +1427,10 @@ SYSCALL_DEFINE4(semtimedop, int, semid, struct sembuf __user *, tsops,
 	if (error)
 		goto out_unlock_free;
 
+	// 遍历sem_array对应sem_queue链表中的所有项，对链表中的每一项sem进行操作，
+	// 具体值的更改操作由函数try_atomic_semop完成，当try_atomic_semop返回非正值时，
+	// 表示不需要再等待，此时唤醒等待进程。
+	
 	error = try_atomic_semop (sma, sops, nsops, un, task_tgid_vnr(current));
 	if (error <= 0) {
 		if (alter && error == 0)
@@ -1487,6 +1524,9 @@ out_free:
 	return error;
 }
 
+//信号量操作
+//tsops - 待操作的信号量集合，包含了对于型号量集合的操作方法信息
+//nsops - 要操作信号灯数
 SYSCALL_DEFINE3(semop, int, semid, struct sembuf __user *, tsops,
 		unsigned, nsops)
 {

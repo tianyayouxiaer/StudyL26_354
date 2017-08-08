@@ -28,8 +28,9 @@
  *	returned 0 we must skip the element, otherwise we got the reference.
  *	Once the reference is obtained we can drop the spinlock.
  */
-
+//所有文件系统都注册到file_systems指向的链表中
 static struct file_system_type *file_systems;
+//保护整个链表免受同时访问
 static DEFINE_RWLOCK(file_systems_lock);
 
 /* WARNING: This can be used only if we _already_ own a reference */
@@ -75,12 +76,13 @@ int register_filesystem(struct file_system_type * fs)
 	if (fs->next)
 		return -EBUSY;
 	INIT_LIST_HEAD(&fs->fs_supers);
+	//链表操作加写锁保护
 	write_lock(&file_systems_lock);
 	p = find_filesystem(fs->name, strlen(fs->name));
 	if (*p)
 		res = -EBUSY;
 	else
-		*p = fs;
+		*p = fs;//直接放到了链表的尾部
 	write_unlock(&file_systems_lock);
 	return res;
 }
@@ -98,7 +100,7 @@ EXPORT_SYMBOL(register_filesystem);
  *	Once this function has returned the &struct file_system_type structure
  *	may be freed or reused.
  */
- 
+ //文件系统卸载时，调用该函数
 int unregister_filesystem(struct file_system_type * fs)
 {
 	struct file_system_type ** tmp;
@@ -265,6 +267,7 @@ static struct file_system_type *__get_fs_type(const char *name, int len)
 	return fs;
 }
 
+//以文件系统名来扫描已注册的文件系统链表以查找文件系统类型的name字段，并返回指向相应的file_system_type对象
 struct file_system_type *get_fs_type(const char *name)
 {
 	struct file_system_type *fs;

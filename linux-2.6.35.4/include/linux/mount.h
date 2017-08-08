@@ -47,15 +47,16 @@ struct mnt_namespace;
 
 #define MNT_INTERNAL	0x4000
 
+//已安装文件描述符，描述安装点和安装标志，以及要安装文件系统与其它已安装文件系统之间的关系
 struct vfsmount {
-	struct list_head mnt_hash;
-	struct vfsmount *mnt_parent;	/* fs we are mounted on */
-	struct dentry *mnt_mountpoint;	/* dentry of mountpoint */
-	struct dentry *mnt_root;	/* root of the mounted tree */
-	struct super_block *mnt_sb;	/* pointer to superblock */
-	struct list_head mnt_mounts;	/* list of children, anchored here */
+	struct list_head mnt_hash;//散列表链表指针
+	struct vfsmount *mnt_parent;	/* fs we are mounted on *///指向父文件系统，这个文件系统安装在其上
+	struct dentry *mnt_mountpoint;	/* dentry of mountpoint *///指向这个文件系统的安装点目录的dentry
+	struct dentry *mnt_root;	/* root of the mounted tree *///指向这个文件系统根目录的dentry
+	struct super_block *mnt_sb;	/* pointer to superblock *///指向这个文件系统的超级块对象
+	struct list_head mnt_mounts;	/* list of children, anchored here *///包含所有文件系统描述符链表的头（相对这个文件系统）
 	struct list_head mnt_child;	/* and going through their mnt_child */
-	int mnt_flags;
+	int mnt_flags;//标志
 	/* 4 bytes hole on 64bits arches */
 	const char *mnt_devname;	/* Name of device e.g. /dev/dsk/hda1 */
 	struct list_head mnt_list;

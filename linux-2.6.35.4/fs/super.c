@@ -1079,6 +1079,7 @@ EXPORT_SYMBOL_GPL(do_kern_mount);
 
 struct vfsmount *kern_mount_data(struct file_system_type *type, void *data)
 {
+	//初始化挂载点的根目录和超级块。
 	return vfs_kern_mount(type, MS_KERNMOUNT, type->name, data);
 }
 

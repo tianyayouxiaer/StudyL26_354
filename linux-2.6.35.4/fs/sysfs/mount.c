@@ -187,8 +187,14 @@ int __init sysfs_init(void)
 	if (err)
 		goto out_err;
 
+	//调用register_filesystem()注册文件系统类型sysfs_fs_type，并加入到全局单链表file_systems中
 	err = register_filesystem(&sysfs_fs_type);
 	if (!err) {
+		/*
+		kern_mount()调用sysfs_fs_type的.mount成员sysfs_mount()创建并初始化超级块、根目录'/'、
+		根目录的索引节点等数据结构；并且把超级块添加到全局单链表super_blocks中，把索引节点添
+		加到hash表inode_hashtable和超级块的inode链表中。
+		*/
 		sysfs_mount = kern_mount(&sysfs_fs_type);
 		if (IS_ERR(sysfs_mount)) {
 			printk(KERN_ERR "sysfs: could not mount!\n");

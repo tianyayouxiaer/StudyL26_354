@@ -1733,15 +1733,16 @@ static inline void file_accessed(struct file *file)
 
 int sync_inode(struct inode *inode, struct writeback_control *wbc);
 
+//文件系统类型
 struct file_system_type {
-	const char *name;
-	int fs_flags;
+	const char *name;//文件系统名字
+	int fs_flags;//文件系统类型标志
 	int (*get_sb) (struct file_system_type *, int,
-		       const char *, void *, struct vfsmount *);
-	void (*kill_sb) (struct super_block *);
-	struct module *owner;
-	struct file_system_type * next;
-	struct list_head fs_supers;
+		       const char *, void *, struct vfsmount *);//读超级块的方法
+	void (*kill_sb) (struct super_block *);//删除超级块的方法
+	struct module *owner;//指向实现文件系统的模块的指针
+	struct file_system_type * next;//指向文件系统类型链表中下一个元素指针
+	struct list_head fs_supers;//具有相同文件系统类型的超级快对象链表的头
 
 	struct lock_class_key s_lock_key;
 	struct lock_class_key s_umount_key;

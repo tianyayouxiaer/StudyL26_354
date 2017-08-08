@@ -36,14 +36,16 @@
 #include <linux/time.h>
 #include <linux/cpu.h>
 
+//每cpu变量，与系统相关
 /* Global control variables for rcupdate callback mechanism. */
 struct rcu_ctrlblk {
 	struct rcu_head *rcucblist;	/* List of pending callbacks (CBs). */
 	struct rcu_head **donetail;	/* ->next pointer of last "done" CB. */
-	struct rcu_head **curtail;	/* ->next pointer of last CB. */
+	struct rcu_head **curtail;	/* ->next pointer of last CB. *///最后一cb的next指针
 };
 
 /* Definition for rcupdate control block. */
+//rcu更新控制块，每cup变量，一个四进程调度相关，一个与底部中断回调相关
 static struct rcu_ctrlblk rcu_sched_ctrlblk = {
 	.donetail	= &rcu_sched_ctrlblk.rcucblist,
 	.curtail	= &rcu_sched_ctrlblk.rcucblist,
@@ -142,6 +144,7 @@ void rcu_check_callbacks(int cpu, int user)
 		rcu_bh_qs(cpu);
 }
 
+//在
 /*
  * Helper function for rcu_process_callbacks() that operates on the
  * specified rcu_ctrlkblk structure.
@@ -177,6 +180,7 @@ static void __rcu_process_callbacks(struct rcu_ctrlblk *rcp)
 /*
  * Invoke any callbacks whose grace period has completed.
  */
+ //rcu软中断回调
 static void rcu_process_callbacks(struct softirq_action *unused)
 {
 	__rcu_process_callbacks(&rcu_sched_ctrlblk);
@@ -205,16 +209,21 @@ EXPORT_SYMBOL_GPL(synchronize_sched);
 /*
  * Helper function for call_rcu() and call_rcu_bh().
  */
+//该函数也很简单,就是将参数传入的回调函数fun赋值给一个struct rcu_head变量，
+//再将这个struct rcu_head加在了per_cpu变量rcu_data的nxttail 链表上。
+
 static void __call_rcu(struct rcu_head *head,
 		       void (*func)(struct rcu_head *rcu),
 		       struct rcu_ctrlblk *rcp)
 {
 	unsigned long flags;
 
+	//把回调函数放到rcu_head中，封装一个rcu_head结构
 	head->func = func;
 	head->next = NULL;
 
 	local_irq_save(flags);
+	//把该rcu_head插入到rcu_sched_ctrlblk的curtail尾部
 	*rcp->curtail = head;
 	rcp->curtail = &head->next;
 	local_irq_restore(flags);
@@ -229,7 +238,9 @@ static void __call_rcu(struct rcu_head *head,
  当修改对象时，RCU将通过函数call_rcu进行延迟更新。RCU IPC对象通过引用计数触发延迟更新函数call_rcu的调用。
  在对象修改前调用函数ipc_rcu_getref增加引用计数，修改后调用函数 ipc_rcu_putref将引用计数减1，当引用计数
  为0时，调用call_rcu进行延迟更新。
- */
+ */
+
+ //注册一个rcu回调到rcu_sched_ctrblk的curtail上
 void call_rcu(struct rcu_head *head, void (*func)(struct rcu_head *rcu))
 {
 	__call_rcu(head, func, &rcu_sched_ctrlblk);
@@ -290,6 +301,7 @@ EXPORT_SYMBOL_GPL(rcu_barrier_sched);
 
 void __init rcu_init(void)
 {
+	//注册RCU_SOFTIRQ 软中断处理函数rcu_process_callbacks
 	open_softirq(RCU_SOFTIRQ, rcu_process_callbacks);
 }
 

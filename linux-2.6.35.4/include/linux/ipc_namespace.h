@@ -89,7 +89,7 @@ struct ipc_namespace {
 	//分别对应信号量、消息队列和共享内存的ID集
 	struct ipc_ids	ids[3];
 	int		sem_ctls[4];
-	int		used_sems;
+	int		used_sems;//已使用信号量个数
 
 	int		msg_ctlmax;//单个消息的最大值，默认为8KB
 	int		msg_ctlmnb;//消息队列中全部消息的大小 默认为16KB
@@ -115,7 +115,6 @@ struct ipc_namespace {
 	unsigned int    mq_queues_max;   /* initialized to DFLT_QUEUESMAX */
 	unsigned int    mq_msg_max;      /* initialized to DFLT_MSGMAX */
 	unsigned int    mq_msgsize_max;  /* initialized to DFLT_MSGSIZEMAX */
-
 };
 
 extern struct ipc_namespace init_ipc_ns;
